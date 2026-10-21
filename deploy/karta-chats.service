@@ -1,0 +1,21 @@
+[Unit]
+Description=Карта света: читалка закрытых чатов Telegram (аккаунт-участник)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=nobody
+Group=nogroup
+WorkingDirectory=/opt/karta-sveta
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/karta-sveta/.venv/bin/python scripts/tg_ingest.py --config /etc/karta-sveta-chats.json
+Restart=always
+RestartSec=60
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/karta-reader
+
+[Install]
+WantedBy=multi-user.target

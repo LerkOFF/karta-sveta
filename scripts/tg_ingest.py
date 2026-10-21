@@ -15,6 +15,7 @@
 import argparse
 import asyncio
 import json
+import random
 import sys
 import time
 import urllib.request
@@ -33,6 +34,9 @@ def to_payload(text, title, chat_id, msg_id, sender_id, ts):
     """Одно сообщение чата в тело запроса. None, если сообщение не про свет."""
     text = (text or "").strip()
     if not text or len(text) > MAX_TEXT:
+        return None
+    # Вопрос «есть ли свет на Артёма?» не отметка.
+    if text.endswith("?"):
         return None
     folded = text.lower()
     if not any(word in folded for word in WORDS):
@@ -60,6 +64,8 @@ def post(endpoint, token, payload):
 
 def load_config(path):
     config = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not config.get("token") and config.get("token_file"):
+        config["token"] = Path(config["token_file"]).read_text(encoding="utf-8").strip()
     if not config.get("token"):
         secret = ROOT / "data" / "secret.json"
         config["token"] = json.loads(secret.read_text(encoding="utf-8"))["ingest_token"]
@@ -90,7 +96,33 @@ async def send(config, payload):
     print(f"{payload['source']}: {result.get('status')} {names} ok={result.get('ok')}", flush=True)
 
 
-async def run(config, check_only):
+async def join_chats(client, config):
+    """Вступает в чаты из списка, по одному, с паузами. Ссылки-приглашения и @имена."""
+    from telethon import errors, functions
+
+    for ref in config["chats"]:
+        text = str(ref)
+        try:
+            if "joinchat/" in text or "/+" in text or text.startswith("+"):
+                invite = text.rsplit("/", 1)[-1].lstrip("+")
+                await client(functions.messages.ImportChatInviteRequest(invite))
+            else:
+                entity = await client.get_entity(ref)
+                await client(functions.channels.JoinChannelRequest(entity))
+            print(f"вступил: {text}", flush=True)
+        except errors.UserAlreadyParticipantError:
+            print(f"уже состою: {text}", flush=True)
+        except errors.InviteRequestSentError:
+            print(f"заявка отправлена, нужно одобрение администратора: {text}", flush=True)
+        except errors.FloodWaitError as error:
+            print(f"Telegram просит подождать {error.seconds} с, останавливаюсь на {text}", flush=True)
+            return
+        except Exception as error:  # закрытый чат, нет такого имени и т.п.
+            print(f"не вышло {text}: {type(error).__name__}", flush=True)
+        await asyncio.sleep(random.uniform(25, 45))
+
+
+async def run(config, check_only, join_only=False):
     try:
         from telethon import TelegramClient, events
     except ImportError:
@@ -99,6 +131,10 @@ async def run(config, check_only):
     session = str(ROOT / config.get("session", "data/tg-reader"))
     client = TelegramClient(session, int(config["api_id"]), config["api_hash"], proxy=proxy_of(config))
     await client.start()
+    if join_only:
+        await join_chats(client, config)
+        await client.disconnect()
+        return
 
     chats = []
     for ref in config["chats"]:
@@ -142,8 +178,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--config", default=str(CONFIG))
     parser.add_argument("--check", action="store_true", help="только войти и показать, какие чаты найдены")
+    parser.add_argument("--join", action="store_true", help="вступить в чаты из списка (по одному, с паузами) и выйти")
     args = parser.parse_args()
-    asyncio.run(run(load_config(args.config), args.check))
+    asyncio.run(run(load_config(args.config), args.check, args.join))
 
 
 if __name__ == "__main__":

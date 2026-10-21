@@ -6,6 +6,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from parsing import status_of, streets_in
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+from tg_ingest import to_payload
+
 
 class ParsingTest(unittest.TestCase):
     def test_off(self):
@@ -41,6 +44,10 @@ class ParsingTest(unittest.TestCase):
             "ожидается поставка ещё 100. Они работают на дизельном топливе."
         )
         self.assertEqual(streets_in(news), [])
+
+    def test_question_is_not_a_report(self):
+        self.assertIsNone(to_payload("на Артёма нет света?", "чат", 1, 1, 2, 0))
+        self.assertIsNotNone(to_payload("на Артёма нет света", "чат", 1, 2, 2, 0))
 
     def test_street_found(self):
         keys = [item["key"] for item in streets_in("на Артёма нет света")]

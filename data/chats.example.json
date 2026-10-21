@@ -1,10 +1,10 @@
 {
   "api_id": 0,
-  "api_hash": "с my.telegram.org",
+  "api_hash": "api_hash вашего приложения или публичный api_id официального клиента",
   "session": "data/tg-reader",
-  "endpoint": "http://127.0.0.1:8765/api/ingest",
-  "token": "",
-  "chats": ["@имя_чата_района", -1001234567890],
+  "endpoint": "https://xn----ctbhcc4athwm3c.xn--p1ai/api/ingest",
+  "token_file": "/etc/karta-sveta.token",
+  "chats": ["pereklichka_donetsk", "pereklichka_po_rayonam"],
   "backfill_hours": 6,
   "proxy": null
 }
