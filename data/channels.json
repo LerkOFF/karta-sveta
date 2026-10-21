@@ -1,5 +1,5 @@
 {
-  "endpoint": "https://lerk.tech/svet/api/ingest",
+  "endpoint": "https://xn----ctbhcc4athwm3c.xn--p1ai/api/ingest",
   "interval_sec": 90,
   "channels": [
     {
