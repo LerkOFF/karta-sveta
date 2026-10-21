@@ -1,0 +1,10 @@
+{
+  "api_id": 0,
+  "api_hash": "с my.telegram.org",
+  "session": "data/tg-reader",
+  "endpoint": "http://127.0.0.1:8765/api/ingest",
+  "token": "",
+  "chats": ["@имя_чата_района", -1001234567890],
+  "backfill_hours": 6,
+  "proxy": null
+}
