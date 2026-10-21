@@ -25,6 +25,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from bulletins import classify  # noqa: E402
 from parsing import status_of, streets_in  # noqa: E402
 from tg_ingest import to_payload, post  # noqa: E402
 
@@ -82,6 +83,31 @@ def token_of(args):
     )["ingest_token"]
 
 
+def send_bulletin(config, token, name, channel, ident, ts, text, dry_run):
+    """Общегородская сводка («все ТП запитаны», «частично обесточены районы») идёт отдельным путём."""
+    found = classify(text)
+    if not found:
+        return False
+    payload = {
+        "text": text,
+        "source": channel.get("title") or name,
+        "ts": ts,
+        "ext_id": f"tgweb:{name}/{ident}",
+    }
+    if dry_run:
+        print(json.dumps({"bulletin": found, **payload}, ensure_ascii=False), flush=True)
+        return True
+    endpoint = config.get("bulletin_endpoint") or config["endpoint"].rsplit("/", 1)[0] + "/bulletin"
+    try:
+        result = post(endpoint, token, payload)
+    except Exception as error:
+        print(f"{name}/{ident}: сводка не отправилась: {error}", file=sys.stderr, flush=True)
+        return True
+    if result.get("new"):
+        print(f"{name}/{ident}: сводка {result.get('kind')} {', '.join(result.get('districts', []))}", flush=True)
+    return True
+
+
 def round_once(config, token, seen, dry_run):
     sent = 0
     for channel in config["channels"]:
@@ -97,6 +123,8 @@ def round_once(config, token, seen, dry_run):
                 continue
             seen.add(key)
             text = tidy(text)
+            if send_bulletin(config, token, name, channel, ident, ts, text, dry_run):
+                continue
             # из канала берём только пересказ жителей, новости и рекламу не трогаем
             if not text.lower().startswith("нам пишут") or len(text) > MAX_REPORT:
                 continue

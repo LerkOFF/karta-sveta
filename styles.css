@@ -77,6 +77,16 @@ h2 {
   border-radius: 8px;
 }
 
+.bulletin {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font: 14px/1.4 ui-sans-serif, system-ui, sans-serif;
+}
+.bulletin[hidden] { display: none; }
+.bulletin.on { background: #dcefe3; color: #12532f; }
+.bulletin.off { background: #fbe2dc; color: #7a1d14; }
+
 .field {
   display: block;
   margin-bottom: 6px;

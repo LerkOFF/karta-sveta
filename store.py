@@ -8,6 +8,7 @@ import sqlite3
 import time
 from pathlib import Path
 
+import bulletins
 from model import HORIZON_MIN, MIN_MS, assess
 
 ROOT = Path(__file__).resolve().parent
@@ -36,6 +37,18 @@ CREATE TABLE IF NOT EXISTS reports (
 CREATE INDEX IF NOT EXISTS reports_key_at ON reports (key, at);
 CREATE INDEX IF NOT EXISTS reports_at ON reports (at);
 CREATE UNIQUE INDEX IF NOT EXISTS reports_ext ON reports (ext_id, key) WHERE ext_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS bulletins (
+    id INTEGER PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN ('all_on', 'partial_off')),
+    at INTEGER NOT NULL,
+    saved_at INTEGER NOT NULL,
+    source TEXT NOT NULL,
+    districts TEXT NOT NULL DEFAULT '',
+    text TEXT,
+    ext_id TEXT UNIQUE
+);
+CREATE INDEX IF NOT EXISTS bulletins_at ON bulletins (at);
 """
 
 
@@ -125,15 +138,45 @@ def add(conn, street, status, kind, source, reporter, text="", at=None, ext_id=N
     return True
 
 
+def add_bulletin(conn, kind, at, source, districts, text="", ext_id=None):
+    """Пишет общегородскую сводку. False, если такая запись уже есть."""
+    now = int(time.time() * 1000)
+    cursor = conn.execute(
+        "INSERT OR IGNORE INTO bulletins (kind, at, saved_at, source, districts, text, ext_id)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (kind, int(at), now, source[:80], ",".join(districts), (text or "")[:300], ext_id),
+    )
+    return cursor.rowcount > 0
+
+
+def recent_bulletins(conn, now_ms):
+    """Сводки за сутки, слитые по видам: см. bulletins.merge."""
+    since = now_ms - HORIZON_MIN * MIN_MS
+    rows = conn.execute("SELECT * FROM bulletins WHERE at >= ? ORDER BY at", (since,)).fetchall()
+    return bulletins.merge(
+        {
+            "kind": row["kind"],
+            "at": row["at"],
+            "source": row["source"],
+            "districts": [name for name in row["districts"].split(",") if name],
+            "text": row["text"],
+        }
+        for row in rows
+    )
+
+
 def live(conn, now_ms=None):
-    """Статус каждой улицы, по которой есть отметки за последние сутки."""
+    """Статус каждой улицы за последние сутки и последняя общегородская сводка."""
     now_ms = int(now_ms or time.time() * 1000)
     since = now_ms - HORIZON_MIN * MIN_MS
+    clusters = recent_bulletins(conn, now_ms)
+    restored = bulletins.restored_at(clusters)
     rows = conn.execute("SELECT * FROM reports WHERE at >= ? ORDER BY key, at", (since,)).fetchall()
     by_key = {}
     for row in rows:
         by_key.setdefault(row["key"], []).append(dict(row))
-    result = [assess(items, now_ms) for items in by_key.values()]
+    result = [assess(items, now_ms, restored) for items in by_key.values()]
     result = [item for item in result if item]
     result.sort(key=lambda item: item["at"], reverse=True)
-    return result
+    latest = clusters[-1] if clusters else None
+    return {"reports": result, "bulletin": latest}

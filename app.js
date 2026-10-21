@@ -4,6 +4,8 @@ const LEVEL_WORD = {
   stale: "давно не подтверждали",
 };
 
+const BULLETIN_SHOW_MS = 12 * 60 * 60 * 1000;
+
 const queryInput = document.querySelector("#query");
 const resultsEl = document.querySelector("#results");
 const pickedEl = document.querySelector("#picked");
@@ -13,6 +15,7 @@ const hereBtn = document.querySelector("#here");
 const markNote = document.querySelector("#mark-note");
 const feedEl = document.querySelector("#feed");
 const bannerEl = document.querySelector("#banner");
+const bulletinEl = document.querySelector("#bulletin");
 const autoEl = document.querySelector("#auto");
 const stepsEl = document.querySelector("#steps");
 const sourcesEl = document.querySelector("#sources");
@@ -31,6 +34,7 @@ let selected = null;
 let focusKey = null;
 let liveReports = [];
 let liveByKey = new Map();
+let bulletin = null;
 let clockShift = 0;
 let featuresBySegment = new Map();
 let featuresByKey = new Map();
@@ -79,21 +83,54 @@ function applyState(segment, key) {
   );
 }
 
+function clock(ms) {
+  return new Date(ms).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+}
+
+// Донецкэнерго написал «все ТП запитаны» позже этой отметки «света нет».
+function restoredNote(live, verdict = true) {
+  if (!live || !live.superseded_at) return "";
+  const tail = verdict ? ": отметка, скорее всего, устарела" : "";
+  return ` В ${clock(live.superseded_at)} Донецкэнерго сообщил, что все ТП запитаны${tail}.`;
+}
+
 function describe(state) {
   const word = (status) => (status === "on" ? "Свет есть" : "Света нет");
   const live = state.live;
   if (state.level === "sure" || state.level === "likely") {
     const dispute = live.conflict ? " Ответы расходятся." : "";
-    return `${word(live.status)}, ${ago(live.at)}: ${LEVEL_WORD[state.level]}, ${sourcesWord(live.sources)}.${dispute} Последняя отметка: «${live.source}».`;
+    return `${word(live.status)}, ${ago(live.at)}: ${LEVEL_WORD[state.level]}, ${sourcesWord(live.sources)}.${dispute}${restoredNote(live)} Последняя отметка: «${live.source}».`;
   }
   if (state.level === "schedule") {
-    const old = live ? ` Последняя отметка (${word(live.status).toLowerCase()}, ${ago(live.at)}) устарела.` : "";
+    const old = live ? ` Последняя отметка (${word(live.status).toLowerCase()}, ${ago(live.at)}) устарела.${restoredNote(live, false)}` : "";
     return `По графику сейчас ${state.power === "on" ? "свет есть" : "света нет"}. Свежих отметок нет.${old}`;
   }
   if (state.level === "stale") {
-    return `${word(live.status)} ${ago(live.at)}, с тех пор никто не подтверждал. Цвет блёклый: верить с оглядкой.`;
+    return `${word(live.status)} ${ago(live.at)}, с тех пор никто не подтверждал.${restoredNote(live)} Цвет блёклый: верить с оглядкой.`;
   }
   return "Данных нет: ни графика, ни свежих отметок. Если знаешь, нажми кнопку.";
+}
+
+// Общегородская сводка: полоска сверху. Улицы она не красит.
+function renderBulletin() {
+  const found = bulletin;
+  if (!found || nowMs() - found.at > BULLETIN_SHOW_MS) {
+    bulletinEl.hidden = true;
+    return;
+  }
+  const when = `${clock(found.at)} (${ago(found.at)})`;
+  const sources = found.sources > 1 ? ` ${sourcesWord(found.sources)}.` : "";
+  if (found.kind === "all_on") {
+    bulletinEl.className = "bulletin on";
+    bulletinEl.textContent = `${when}. Донецкэнерго: все трансформаторные подстанции Донецка запитаны. Отметки «света нет» старше этого времени, скорее всего, устарели.${sources}`;
+  } else {
+    const where = found.districts.length
+      ? `Частично обесточены районы: ${found.districts.join(", ")}.`
+      : "В некоторых районах Донецка пропал свет.";
+    bulletinEl.className = "bulletin off";
+    bulletinEl.textContent = `${when}. ${where} По улицам эта сводка карту не красит.${sources}`;
+  }
+  bulletinEl.hidden = false;
 }
 
 function paint() {
@@ -234,6 +271,8 @@ async function pullLive() {
   clockShift = Number(data.now) ? data.now - Date.now() : 0;
   liveReports = Array.isArray(data.reports) ? data.reports : [];
   liveByKey = new Map(liveReports.map((item) => [item.key, item]));
+  bulletin = data.bulletin || null;
+  renderBulletin();
   const fresh = liveReports.filter((item) => item.level !== "stale").length;
   autoEl.textContent = `${autoNote} Отметок за сутки по ${liveReports.length} улицам, из них свежих ${fresh}. Страница обновляется каждые 20 секунд.`;
   if (featuresBySegment.size) paint();

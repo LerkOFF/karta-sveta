@@ -68,6 +68,22 @@ class AssessTest(unittest.TestCase):
         button = assess([row(10, kind="button")], NOW)["confidence"]
         self.assertLess(button, chat)
 
+    def test_old_off_is_weakened_by_restore_bulletin(self):
+        plain = assess([row(120, "off")], NOW)
+        restored = assess([row(120, "off")], NOW, restored_at=NOW - 30 * MIN_MS)
+        self.assertLess(restored["confidence"], plain["confidence"])
+        self.assertEqual(restored["superseded_at"], NOW - 30 * MIN_MS)
+
+    def test_off_after_restore_bulletin_is_untouched(self):
+        plain = assess([row(10, "off")], NOW)
+        restored = assess([row(10, "off")], NOW, restored_at=NOW - 30 * MIN_MS)
+        self.assertEqual(restored["confidence"], plain["confidence"])
+        self.assertIsNone(restored["superseded_at"])
+
+    def test_on_is_not_touched_by_restore_bulletin(self):
+        restored = assess([row(120, "on")], NOW, restored_at=NOW - 30 * MIN_MS)
+        self.assertIsNone(restored["superseded_at"])
+
     def test_report_from_the_future_is_age_zero(self):
         result = assess([row(-5)], NOW)
         self.assertEqual(result["age_min"], 0)

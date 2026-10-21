@@ -24,6 +24,9 @@ CORROBORATION_BONUS = 0.25
 CONFLICT_MIN = 30
 CONFLICT_FACTOR = 0.6
 
+# Донецкэнерго сообщил «все ТП запитаны» позже отметки «света нет»: отметка, скорее всего, устарела.
+BULLETIN_FACTOR = 0.35
+
 SURE_FROM = 0.6
 LIKELY_FROM = 0.3
 
@@ -36,11 +39,12 @@ def level_of(confidence: float) -> str:
     return "stale"
 
 
-def assess(rows, now_ms: int):
+def assess(rows, now_ms: int, restored_at=None):
     """rows: отметки одной улицы (dict с at, status, kind, reporter, source).
 
     Возвращает статус по самой новой отметке или None, если все старше суток.
     Каждый человек (reporter) считается один раз, по его последней отметке.
+    restored_at: время общегородской сводки «все ТП запитаны», если после неё отключений не было.
     """
     rows = [row for row in rows if now_ms - row["at"] < HORIZON_MIN * MIN_MS]
     if not rows:
@@ -74,6 +78,11 @@ def assess(rows, now_ms: int):
     if conflict:
         confidence *= CONFLICT_FACTOR
 
+    superseded_at = None
+    if status == "off" and restored_at and latest["at"] < restored_at:
+        confidence *= BULLETIN_FACTOR
+        superseded_at = restored_at
+
     return {
         "key": latest["key"],
         "name": latest["name"],
@@ -84,5 +93,6 @@ def assess(rows, now_ms: int):
         "level": level_of(confidence),
         "sources": 1 + agree,
         "conflict": conflict,
+        "superseded_at": superseded_at,
         "source": latest["source"],
     }

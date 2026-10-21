@@ -15,6 +15,7 @@ from collections import defaultdict, deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import bulletins
 import store
 from model import HORIZON_MIN, MIN_MS
 from parsing import KEYS, status_of, streets_in
@@ -168,8 +169,8 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path == "/api/live":
             with store.connect() as conn:
-                reports = store.live(conn)
-            self.send_json({"now": int(time.time() * 1000), "reports": reports})
+                state = store.live(conn)
+            self.send_json({"now": int(time.time() * 1000), **state})
             return
         if path == "/api/health":
             self.send_json({"ok": True})
@@ -204,6 +205,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/ingest":
             self.ingest(payload)
             return
+        if path == "/api/bulletin":
+            self.bulletin(payload)
+            return
         if path not in ("/api/comments", "/api/mark"):
             self.send_error(404)
             return
@@ -234,14 +238,41 @@ class Handler(BaseHTTPRequestHandler):
             )
         self.send_json(result)
 
+    def bulletin(self, payload):
+        """Общегородская сводка («все ТП запитаны», «частично обесточены районы»).
+
+        Тело: {"text", "source", "ts", "ext_id"}. Вид и районы сервер определяет сам.
+        """
+        if not check_token(self):
+            self.send_json({"ok": False, "reason": "нет доступа"}, 403)
+            return
+        found = bulletins.classify(str(payload.get("text") or ""))
+        if not found:
+            self.send_json({"ok": False, "reason": "это не сводка"})
+            return
+        at = message_time(payload.get("ts"))
+        if int(time.time() * 1000) - at > HORIZON_MIN * MIN_MS:
+            self.send_json({"ok": False, "reason": "сводка старше суток"})
+            return
+        with store.connect() as conn:
+            new = store.add_bulletin(
+                conn,
+                found["kind"],
+                at,
+                str(payload.get("source") or "канал"),
+                found["districts"],
+                text=str(payload.get("text") or ""),
+                ext_id=str(payload.get("ext_id") or "") or None,
+            )
+        self.send_json({"ok": True, "kind": found["kind"], "districts": found["districts"], "new": new})
+
     def ingest(self, payload):
         """Для читалок чатов и датчиков. Нужен заголовок X-Ingest-Token.
 
         Тело: {"text", "source", "sender", "ts", "ext_id"}; для датчика вместо text
         можно прислать {"kind": "sensor", "key", "status", "sender"}.
         """
-        given = self.headers.get("X-Ingest-Token", "")
-        if not hmac.compare_digest(given.encode(), SECRET["ingest_token"].encode()):
+        if not check_token(self):
             self.send_json({"ok": False, "reason": "нет доступа"}, 403)
             return
         kind = payload.get("kind") if payload.get("kind") in ("chat", "bot", "sensor", "channel") else "chat"
@@ -259,6 +290,11 @@ class Handler(BaseHTTPRequestHandler):
             ext_id=str(payload.get("ext_id") or "") or None,
         )
         self.send_json(result)
+
+
+def check_token(handler):
+    given = handler.headers.get("X-Ingest-Token", "")
+    return hmac.compare_digest(given.encode(), SECRET["ingest_token"].encode())
 
 
 def main():
