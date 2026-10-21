@@ -1,0 +1,15 @@
+{
+  "endpoint": "https://lerk.tech/svet/api/ingest",
+  "interval_sec": 90,
+  "channels": [
+    {"name": "Kiyevskiytyt", "title": "Киевский Тут"},
+    {"name": "Voroshilovskiytyt", "title": "Ворошиловский Тут"},
+    {"name": "Kalininskiytyt", "title": "Калининский Тут"},
+    {"name": "Kuybyshevskiy", "title": "Куйбышевский Тут"},
+    {"name": "Petrovskiytyt", "title": "Петровский Тут"},
+    {"name": "Kirovskiytyt", "title": "Кировский Тут"},
+    {"name": "Leninskiytyt", "title": "Ленинский Тут"},
+    {"name": "budonnovskiy", "title": "Будённовский Тут"},
+    {"name": "proletarskiytyt", "title": "Пролетарский Тут"}
+  ]
+}

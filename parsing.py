@@ -89,8 +89,17 @@ def last_mark(folded: str, marks):
     return best
 
 
+# Нечёткий поиск улицы только в коротких сообщениях.
+FUZZY_MAX_WORDS = 40
+
+# «Дали свет во всей округе, кроме дома на …»: про улицу целиком это не говорит.
+EXCEPT_MARKS = ("кроме", "за исключением", "исключая")
+
+
 def status_of(text: str):
     folded = norm(text)
+    if any(mark in folded for mark in EXCEPT_MARKS):
+        return None
     off_at = last_mark(folded, OFF_MARKS)
     on_at = last_mark(folded, ON_MARKS)
     if off_at < 0 and on_at < 0:
@@ -123,6 +132,10 @@ def streets_in(text: str):
     if found:
         return found
     words = padded.split()
+    # Нечёткий поиск по основе слова годится для короткой фразы («на Артёма нет света»),
+    # а в длинной новости «котельные» превращаются в улицу Котельникова.
+    if len(words) > FUZZY_MAX_WORDS:
+        return found
     long_words = [word for word in words if len(word) >= 6]
     for index, word in enumerate(long_words):
         nxt = long_words[index + 1] if index + 1 < len(long_words) else ""

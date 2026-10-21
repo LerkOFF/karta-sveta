@@ -1,0 +1,20 @@
+[Unit]
+Description=Карта света: читалка публичных каналов Telegram
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=nobody
+Group=nogroup
+WorkingDirectory=/opt/karta-sveta
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 scripts/tgweb_ingest.py --token-file /etc/karta-sveta.token
+Restart=always
+RestartSec=30
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

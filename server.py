@@ -244,7 +244,7 @@ class Handler(BaseHTTPRequestHandler):
         if not hmac.compare_digest(given.encode(), SECRET["ingest_token"].encode()):
             self.send_json({"ok": False, "reason": "нет доступа"}, 403)
             return
-        kind = payload.get("kind") if payload.get("kind") in ("chat", "bot", "sensor") else "chat"
+        kind = payload.get("kind") if payload.get("kind") in ("chat", "bot", "sensor", "channel") else "chat"
         source = str(payload.get("source") or "чат")
         sender = str(payload.get("sender") or source)
         who = store.reporter_id(SECRET["salt"], kind, source, sender)

@@ -1,0 +1,43 @@
+import sys
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from parsing import status_of, streets_in
+
+
+class ParsingTest(unittest.TestCase):
+    def test_off(self):
+        self.assertEqual(status_of('Нам пишут: "На ул. Киселева, света нету 4 неделю"'), "off")
+
+    def test_on(self):
+        self.assertEqual(status_of("на Артёма дали свет"), "on")
+
+    def test_latest_mark_wins(self):
+        self.assertEqual(status_of("света нет, потом дали свет"), "on")
+
+    def test_exception_is_not_a_street_status(self):
+        text = "Дали свет во всей округе кроме дома на ул. Университетская, 100б"
+        self.assertIsNone(status_of(text))
+
+    def test_district_only_has_no_street(self):
+        self.assertEqual(streets_in("в Киевском районе нет света"), [])
+
+    def test_long_news_does_not_become_a_street(self):
+        news = (
+            '"Донбасстеплоэнерго" сделает всё возможное, чтобы котельные работали даже при отключении света. '
+            "Как сообщается, предприятие планирует использовать альтернативные источники электропитания: "
+            "уже закуплено 173 дизель-генератора, до конца года их количество увеличится до 510. "
+            "В критических ситуациях будут задействованы блочно-модульные котельные. Сейчас их 45, "
+            "ожидается поставка ещё 100. Они работают на дизельном топливе."
+        )
+        self.assertEqual(streets_in(news), [])
+
+    def test_street_found(self):
+        keys = [item["key"] for item in streets_in("на Артёма нет света")]
+        self.assertIn("артема", keys)
+
+
+if __name__ == "__main__":
+    unittest.main()
