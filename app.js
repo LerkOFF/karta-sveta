@@ -25,6 +25,8 @@ const map = new maplibregl.Map({
   style: "https://tiles.openfreemap.org/styles/liberty",
   center: [37.8025, 48.0159],
   zoom: 12,
+  minZoom: 10,
+  maxBounds: [[37.45, 47.83], [38.07, 48.16]],
   attributionControl: true,
 });
 map.addControl(new maplibregl.NavigationControl(), "top-left");
@@ -403,8 +405,7 @@ function renderSources(data) {
 function useRussianLabels() {
   (map.getStyle().layers || []).forEach((layer) => {
     if (layer.type !== "symbol") return;
-    if (!/name|place|poi|water|park/i.test(layer.id)) return;
-    if (/shield|ref|exit/i.test(layer.id)) return;
+    if (/shield|ref|exit|arrow/i.test(layer.id)) return;
     if (!layer.layout || !layer.layout["text-field"]) return;
     map.setLayoutProperty(layer.id, "text-field", ["coalesce", ["get", "name:ru"], ["get", "name"]]);
   });
