@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Карта света — Донецк</title>
+  <link rel="stylesheet" href="vendor/maplibre/maplibre-gl.css">
+  <link rel="stylesheet" href="styles.css?v=4">
+</head>
+<body>
+  <div id="map">
+    <div class="legend legend-overlay">
+      <span><i class="swatch on"></i>есть</span>
+      <span><i class="swatch off"></i>нет</span>
+      <span><i class="swatch none"></i>нет данных</span>
+      <span><i class="swatch pick"></i>выбрана</span>
+    </div>
+  </div>
+  <aside>
+    <header class="mast">
+      <p class="eyebrow">Донецк</p>
+      <h1>Карта света</h1>
+      <p id="banner" class="banner"></p>
+      <p id="auto" class="note"></p>
+    </header>
+
+    <section class="block">
+      <label class="field" for="query">Улица</label>
+      <input id="query" type="search" placeholder="Артёма" autocomplete="off">
+      <ul id="results" class="results" hidden></ul>
+      <p id="picked" class="picked">Нажми улицу на карте.</p>
+      <div class="actions">
+        <button id="on" type="button" class="btn on" disabled>Свет есть</button>
+        <button id="off" type="button" class="btn off" disabled>Света нет</button>
+      </div>
+      <button id="here" type="button" class="btn ghost">Моё место</button>
+      <p id="mark-note" class="note"></p>
+    </section>
+
+    <section class="block">
+      <h2>Комментарий из чата</h2>
+      <label class="field" for="source">Группа</label>
+      <input id="source" type="text" placeholder="Киевский чат" autocomplete="off">
+      <label class="field" for="comment">Текст</label>
+      <textarea id="comment" rows="3" placeholder="На Артёма нет света"></textarea>
+      <button id="send-comment" type="button" class="btn ghost">Добавить на карту</button>
+      <p id="comment-note" class="note"></p>
+    </section>
+
+    <section class="block">
+      <h2>Свежие отметки</h2>
+      <ul id="feed" class="feed"></ul>
+      <div class="row">
+        <button id="download" type="button" class="btn ghost">Скачать отметки</button>
+        <label class="btn ghost file">
+          Загрузить отметки
+          <input id="upload" type="file" accept="application/json,.json">
+        </label>
+      </div>
+    </section>
+
+    <section class="block">
+      <h2>Что делать</h2>
+      <ol id="steps"></ol>
+    </section>
+
+    <section class="block">
+      <h2>Откуда данные</h2>
+      <div id="sources"></div>
+    </section>
+
+    <p class="foot">Линии улиц © участники OpenStreetMap. Плитки подложки грузятся из сети.</p>
+  </aside>
+  <script src="vendor/maplibre/maplibre-gl.js"></script>
+  <script src="app.js?v=8"></script>
+</body>
+</html>

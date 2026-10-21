@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.DS_Store
+.venv/
+.env
+
+# рабочие данные и секреты не публикуем
+data/karta.db
+data/karta.db-*
+data/live-reports.json
+data/live-reports.json.migrated
+data/secret.json
+data/*.session
+data/*.session-journal
+data/chats.json
