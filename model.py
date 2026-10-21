@@ -1,0 +1,87 @@
+"""Как из отметок по улице получается статус, возраст и уверенность.
+
+Чистые функции без базы и сети: их можно проверять отдельно (tests/test_model.py).
+"""
+
+MIN_MS = 60 * 1000
+
+# Через сколько минут уверенность в отметке падает вдвое.
+# Свет любят то давать, то снимать, поэтому «есть» устаревает быстрее, чем «нет».
+HALF_LIFE_MIN = {"on": 90, "off": 240}
+
+# Насколько верим источнику.
+TRUST = {"chat": 1.0, "bot": 1.0, "sensor": 1.0, "button": 0.85, "comment": 0.85}
+
+# Дольше суток без подтверждения улица считается серой, но запись остаётся в истории.
+HORIZON_MIN = 24 * 60
+
+# Другой человек с тем же ответом за это время поднимает уверенность.
+CORROBORATION_MIN = 180
+CORROBORATION_BONUS = 0.25
+
+# Если другой человек за это время до последней отметки сказал обратное, это спор.
+CONFLICT_MIN = 30
+CONFLICT_FACTOR = 0.6
+
+SURE_FROM = 0.6
+LIKELY_FROM = 0.3
+
+
+def level_of(confidence: float) -> str:
+    if confidence >= SURE_FROM:
+        return "sure"
+    if confidence >= LIKELY_FROM:
+        return "likely"
+    return "stale"
+
+
+def assess(rows, now_ms: int):
+    """rows: отметки одной улицы (dict с at, status, kind, reporter, source).
+
+    Возвращает статус по самой новой отметке или None, если все старше суток.
+    Каждый человек (reporter) считается один раз, по его последней отметке.
+    """
+    rows = [row for row in rows if now_ms - row["at"] < HORIZON_MIN * MIN_MS]
+    if not rows:
+        return None
+
+    newest_by_reporter = {}
+    for row in rows:
+        prev = newest_by_reporter.get(row["reporter"])
+        if prev is None or prev["at"] < row["at"]:
+            newest_by_reporter[row["reporter"]] = row
+
+    latest = max(newest_by_reporter.values(), key=lambda row: row["at"])
+    status = latest["status"]
+    age_min = max(0.0, (now_ms - latest["at"]) / MIN_MS)
+
+    base = 0.5 ** (age_min / HALF_LIFE_MIN[status])
+    trust = TRUST.get(latest["kind"], 0.85)
+
+    agree = 0
+    conflict = False
+    for row in newest_by_reporter.values():
+        if row["reporter"] == latest["reporter"]:
+            continue
+        if row["status"] == status:
+            if (now_ms - row["at"]) <= CORROBORATION_MIN * MIN_MS:
+                agree += 1
+        elif latest["at"] - row["at"] <= CONFLICT_MIN * MIN_MS:
+            conflict = True
+
+    confidence = min(1.0, base * trust * (1 + CORROBORATION_BONUS * agree))
+    if conflict:
+        confidence *= CONFLICT_FACTOR
+
+    return {
+        "key": latest["key"],
+        "name": latest["name"],
+        "status": status,
+        "at": latest["at"],
+        "age_min": round(age_min, 1),
+        "confidence": round(confidence, 2),
+        "level": level_of(confidence),
+        "sources": 1 + agree,
+        "conflict": conflict,
+        "source": latest["source"],
+    }
