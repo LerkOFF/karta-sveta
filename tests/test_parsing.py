@@ -21,6 +21,14 @@ class ParsingTest(unittest.TestCase):
         text = "Дали свет во всей округе кроме дома на ул. Университетская, 100б"
         self.assertIsNone(status_of(text))
 
+    def test_water_is_not_light(self):
+        text = 'Нам пишут: "На Трудовых Резервов 20, вторую подачу воды фактически нет. Сегодня дали с 20:00 и отключили в 21:00. Люди неделю без воды."'
+        self.assertIsNone(status_of(text))
+
+    def test_street_named_like_light_is_not_a_light_word(self):
+        self.assertIsNone(status_of("на Светлова отключили воду"))
+        self.assertEqual(status_of("на Светлова нет света"), "off")
+
     def test_district_only_has_no_street(self):
         self.assertEqual(streets_in("в Киевском районе нет света"), [])
 

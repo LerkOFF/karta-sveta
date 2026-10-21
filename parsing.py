@@ -1,6 +1,7 @@
 """Разбор текста из чата: какая улица и есть свет или нет."""
 
 import json
+import re
 from pathlib import Path
 
 INDEX = Path(__file__).resolve().parent / "data" / "streets-index.json"
@@ -96,9 +97,15 @@ FUZZY_MAX_WORDS = 40
 EXCEPT_MARKS = ("кроме", "за исключением", "исключая")
 
 
+# «Подачу воды нет», «газ отключили»: слова про отключение без слов про свет ничего не красят.
+LIGHT_WORDS = re.compile(r"\bсвет\w{0,2}\b|электр|обесточ|темно")
+
+
 def status_of(text: str):
     folded = norm(text)
     if any(mark in folded for mark in EXCEPT_MARKS):
+        return None
+    if not LIGHT_WORDS.search(folded):
         return None
     off_at = last_mark(folded, OFF_MARKS)
     on_at = last_mark(folded, ON_MARKS)
