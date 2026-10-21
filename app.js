@@ -209,7 +209,7 @@ function mark(status) {
   if (!selected) return;
   const feature = featuresBySegment.get(selected);
   const props = feature.properties;
-  fetch("/api/mark", {
+  fetch("api/mark", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ key: props.key, status, segment: props.segment }),
@@ -228,7 +228,7 @@ function mark(status) {
 }
 
 async function pullLive() {
-  const response = await fetch("/api/live");
+  const response = await fetch("api/live");
   if (!response.ok) return;
   const data = await response.json();
   clockShift = Number(data.now) ? data.now - Date.now() : 0;
@@ -247,7 +247,7 @@ async function sendComment() {
     note.textContent = "Вставь текст из группы.";
     return;
   }
-  const response = await fetch("/api/comments", {
+  const response = await fetch("api/comments", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text, source }),
