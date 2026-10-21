@@ -124,7 +124,7 @@ python3 scripts/build_streets.py /tmp/donetsk-streets.json
 
 ## Выкладка
 
-Сейчас: VPS с nginx, служба `karta-sveta` слушает только `127.0.0.1:8765`, nginx проксирует `/svet/` на неё. Файлы в `deploy/`: `karta-sveta.service` (systemd, пользователь `www-data`, запись только в `data/`) и `nginx-karta-sveta.conf` (кусок для `server`). Обновление:
+Сейчас: VPS с nginx, служба `karta-sveta` слушает только `127.0.0.1:8765`. Домен свет-донецк.рф (`xn----ctbhcc4athwm3c.xn--p1ai`): виртуальный хост `deploy/nginx-svet-donetsk.conf`, публичный 443 держит Xray, сертификат Let's Encrypt копируется для него хуком продления. Старый адрес `lerk.tech/svet/` перенаправляет на новый, API по старому пути оставлен (`deploy/nginx-karta-sveta.conf`). Служба: `deploy/karta-sveta.service` (systemd, пользователь `www-data`, запись только в `data/`). Обновление:
 
 ```bash
 cd /var/www/karta-sveta && git pull --ff-only && systemctl restart karta-sveta
