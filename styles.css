@@ -165,9 +165,6 @@ textarea {
   color: var(--ink);
 }
 
-.file { text-align: center; display: flex; align-items: center; justify-content: center; }
-.file input { display: none; }
-
 .note, .foot {
   color: var(--muted);
   font: 13px/1.4 ui-sans-serif, system-ui, sans-serif;
@@ -189,6 +186,8 @@ textarea {
 }
 .dot.on { background: var(--on); }
 .dot.off { background: var(--off); }
+.dot.likely { opacity: 0.75; }
+.dot.stale { opacity: 0.4; }
 
 .source {
   padding: 12px 0;
@@ -206,7 +205,9 @@ textarea {
 
 .legend {
   display: flex;
-  gap: 10px;
+  flex-wrap: wrap;
+  max-width: 420px;
+  gap: 6px 10px;
   align-items: center;
   background: var(--card);
   border: 1px solid var(--line);
@@ -219,6 +220,7 @@ textarea {
 .swatch.off { background: var(--off); }
 .swatch.none { background: #8d867c; }
 .swatch.pick { background: var(--pick); }
+.swatch.fade { background: linear-gradient(90deg, var(--on), var(--off)); opacity: 0.4; }
 
 @media (max-width: 800px) {
   body { flex-direction: column; }

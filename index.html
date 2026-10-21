@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Карта света — Донецк</title>
   <link rel="stylesheet" href="vendor/maplibre/maplibre-gl.css">
-  <link rel="stylesheet" href="styles.css?v=4">
+  <link rel="stylesheet" href="styles.css?v=5">
 </head>
 <body>
   <div id="map">
@@ -13,6 +13,7 @@
       <span><i class="swatch on"></i>есть</span>
       <span><i class="swatch off"></i>нет</span>
       <span><i class="swatch none"></i>нет данных</span>
+      <span><i class="swatch fade"></i>блёклый: график или давно не подтверждали</span>
       <span><i class="swatch pick"></i>выбрана</span>
     </div>
   </div>
@@ -50,13 +51,6 @@
     <section class="block">
       <h2>Свежие отметки</h2>
       <ul id="feed" class="feed"></ul>
-      <div class="row">
-        <button id="download" type="button" class="btn ghost">Скачать отметки</button>
-        <label class="btn ghost file">
-          Загрузить отметки
-          <input id="upload" type="file" accept="application/json,.json">
-        </label>
-      </div>
     </section>
 
     <section class="block">
@@ -72,6 +66,6 @@
     <p class="foot">Линии улиц © участники OpenStreetMap. Плитки подложки грузятся из сети.</p>
   </aside>
   <script src="vendor/maplibre/maplibre-gl.js"></script>
-  <script src="app.js?v=8"></script>
+  <script src="app.js?v=9"></script>
 </body>
 </html>

@@ -1,5 +1,8 @@
-const TTL_MS = 6 * 60 * 60 * 1000;
-const STORAGE_KEY = "karta-sveta-reports-v2";
+const LEVEL_WORD = {
+  sure: "уверенно",
+  likely: "скорее всего",
+  stale: "давно не подтверждали",
+};
 
 const queryInput = document.querySelector("#query");
 const resultsEl = document.querySelector("#results");
@@ -26,50 +29,71 @@ map.addControl(new maplibregl.NavigationControl(), "top-left");
 let index = [];
 let selected = null;
 let focusKey = null;
-let reports = loadReports();
 let liveReports = [];
+let liveByKey = new Map();
+let clockShift = 0;
 let featuresBySegment = new Map();
 let featuresByKey = new Map();
 let autoByKey = new Map();
 let autoNote = "";
 
-function loadReports() {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
+// Время сервера, чтобы возраст не зависел от часов на телефоне.
+function nowMs() {
+  return Date.now() + clockShift;
 }
 
-function saveReports() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(reports));
+function ago(ms) {
+  const min = Math.max(0, Math.round((nowMs() - ms) / 60000));
+  if (min < 1) return "только что";
+  if (min < 60) return `${min} мин назад`;
+  const hours = Math.floor(min / 60);
+  const rest = min % 60;
+  if (hours >= 24) return "больше суток назад";
+  return rest ? `${hours} ч ${rest} мин назад` : `${hours} ч назад`;
 }
 
-function freshReport(segment) {
-  const found = reports
-    .filter((item) => item.segment === segment && Date.now() - item.at < TTL_MS)
-    .sort((a, b) => b.at - a.at);
-  return found[0] || null;
+function sourcesWord(count) {
+  const last = count % 10;
+  const tens = count % 100;
+  if (last === 1 && tens !== 11) return `${count} источник`;
+  if (last >= 2 && last <= 4 && (tens < 10 || tens >= 20)) return `${count} источника`;
+  return `${count} источников`;
 }
 
-function liveFor(key) {
-  return liveReports.find((item) => item.key === key && Date.now() - item.at < TTL_MS) || null;
-}
-
-function powerOf(segment, key) {
-  const live = liveFor(key);
-  if (live) return live.status;
-  const report = freshReport(segment);
-  if (report) return report.status;
-  return autoByKey.get(key) || "";
+// Свежая отметка важнее графика. Если отметка выцвела, цвет даёт график,
+// а если и графика нет, остаётся блёклый цвет последней отметки.
+function stateOf(key) {
+  const live = liveByKey.get(key) || null;
+  if (live && live.level !== "stale") return { power: live.status, level: live.level, live };
+  const plan = autoByKey.get(key);
+  if (plan) return { power: plan, level: "schedule", live };
+  if (live) return { power: live.status, level: "stale", live };
+  return { power: "", level: "", live: null };
 }
 
 function applyState(segment, key) {
+  const state = stateOf(key);
   map.setFeatureState(
     { source: "streets", id: segment },
-    { power: powerOf(segment, key), selected: segment === selected }
+    { power: state.power, level: state.level, selected: segment === selected }
   );
+}
+
+function describe(state) {
+  const word = (status) => (status === "on" ? "Свет есть" : "Света нет");
+  const live = state.live;
+  if (state.level === "sure" || state.level === "likely") {
+    const dispute = live.conflict ? " Ответы расходятся." : "";
+    return `${word(live.status)}, ${ago(live.at)}: ${LEVEL_WORD[state.level]}, ${sourcesWord(live.sources)}.${dispute} Последняя отметка: «${live.source}».`;
+  }
+  if (state.level === "schedule") {
+    const old = live ? ` Последняя отметка (${word(live.status).toLowerCase()}, ${ago(live.at)}) устарела.` : "";
+    return `По графику сейчас ${state.power === "on" ? "свет есть" : "света нет"}. Свежих отметок нет.${old}`;
+  }
+  if (state.level === "stale") {
+    return `${word(live.status)} ${ago(live.at)}, с тех пор никто не подтверждал. Цвет блёклый: верить с оглядкой.`;
+  }
+  return "Данных нет: ни графика, ни свежих отметок. Если знаешь, нажми кнопку.";
 }
 
 function paint() {
@@ -131,7 +155,7 @@ function renderSelection() {
       pickedEl.textContent = parts > 1
         ? `${item.name}: ${parts} участков. Нажми нужный на карте.`
         : item.name;
-      markNote.textContent = "Кнопка и комментарий красят улицу целиком на 6 часов. График при этом прячется.";
+      markNote.textContent = `${describe(stateOf(focusKey))} Отметка относится ко всей улице.`;
       return;
     }
     pickedEl.textContent = "Нажми улицу на карте.";
@@ -141,34 +165,15 @@ function renderSelection() {
   const feature = featuresBySegment.get(selected);
   const props = feature.properties;
   pickedEl.textContent = labelFor(props);
-  const live = liveFor(props.key);
-  if (live) {
-    const when = new Date(live.at);
-    const word = live.status === "on" ? "Свет есть" : "Света нет";
-    markNote.textContent = `${word}, из «${live.source}», ${when.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}. Вся улица, на 6 часов.`;
-    return;
-  }
-  const report = freshReport(selected);
-  if (report) {
-    const when = new Date(report.at);
-    const word = report.status === "on" ? "Свет есть" : "Света нет";
-    markNote.textContent = `${word}, отметка ${when.toLocaleString("ru-RU")}. Через 6 часов снова виден график.`;
-    return;
-  }
-  const auto = autoByKey.get(props.key);
-  if (auto === "on") markNote.textContent = "По графику сейчас свет есть. Своя отметка важнее.";
-  else if (auto === "off") markNote.textContent = "По графику сейчас света нет. Своя отметка важнее.";
-  else markNote.textContent = "На этот участок графика нет.";
+  markNote.textContent = `${describe(stateOf(props.key))} Твоя отметка относится ко всей улице.`;
 }
 
 function renderFeed() {
-  const rows = liveReports
-    .filter((item) => Date.now() - item.at < TTL_MS)
-    .slice(0, 12);
+  const rows = liveReports.slice(0, 12);
   feedEl.replaceChildren();
   if (!rows.length) {
     const empty = document.createElement("li");
-    empty.textContent = "Из чатов пока пусто. Цвет Киевского района идёт от графика.";
+    empty.textContent = "Свежих отметок пока нет. Киевский район идёт по графику.";
     feedEl.append(empty);
     return;
   }
@@ -183,12 +188,12 @@ function renderFeed() {
     button.style.cursor = "pointer";
     button.style.font = "15px/1.3 ui-sans-serif, system-ui, sans-serif";
     const dot = document.createElement("i");
-    dot.className = `dot ${item.status}`;
+    dot.className = `dot ${item.status} ${item.level}`;
     const source = item.source ? ` · ${item.source}` : "";
     button.append(
       dot,
       document.createTextNode(
-        `${item.name} · ${item.status === "on" ? "есть" : "нет"}${source} · ${new Date(item.at).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}`
+        `${item.name} · ${item.status === "on" ? "есть" : "нет"} · ${ago(item.at)} · ${LEVEL_WORD[item.level]}${source}`
       )
     );
     button.addEventListener("click", () => {
@@ -204,37 +209,33 @@ function mark(status) {
   if (!selected) return;
   const feature = featuresBySegment.get(selected);
   const props = feature.properties;
-  const box = boundsOf([feature]);
-  reports.push({
-    segment: selected,
-    key: props.key,
-    name: props.name,
-    status,
-    at: Date.now(),
-    lat: (box[0][1] + box[1][1]) / 2,
-    lon: (box[0][0] + box[1][0]) / 2,
-  });
-  saveReports();
-  paint();
   fetch("/api/mark", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      key: props.key,
-      name: props.name,
-      status,
-      source: "кнопка на карте",
-      text: props.name,
-    }),
-  }).then(() => pullLive()).catch(() => {});
+    body: JSON.stringify({ key: props.key, status, segment: props.segment }),
+  })
+    .then(async (response) => {
+      const result = await response.json();
+      if (!result.ok) {
+        markNote.textContent = result.reason || "Отметка не принята.";
+        return;
+      }
+      await pullLive();
+    })
+    .catch(() => {
+      markNote.textContent = "Сервер не ответил, отметка не сохранилась.";
+    });
 }
 
 async function pullLive() {
   const response = await fetch("/api/live");
   if (!response.ok) return;
   const data = await response.json();
+  clockShift = Number(data.now) ? data.now - Date.now() : 0;
   liveReports = Array.isArray(data.reports) ? data.reports : [];
-  autoEl.textContent = `${autoNote} Из чатов закрашено улиц: ${liveReports.length}. Страница проверяет новые записи каждые 20 секунд.`;
+  liveByKey = new Map(liveReports.map((item) => [item.key, item]));
+  const fresh = liveReports.filter((item) => item.level !== "stale").length;
+  autoEl.textContent = `${autoNote} Отметок за сутки по ${liveReports.length} улицам, из них свежих ${fresh}. Страница обновляется каждые 20 секунд.`;
   if (featuresBySegment.size) paint();
 }
 
@@ -253,12 +254,17 @@ async function sendComment() {
   });
   const result = await response.json();
   if (!result.ok) {
-    note.textContent = "Нужны название улицы и слова «свет есть» или «света нет». Район целиком не красится.";
+    note.textContent = response.status === 429 || response.status === 413
+      ? result.reason
+      : "Нужны название улицы и слова «свет есть» или «света нет». Район целиком не красится.";
     return;
   }
   const names = result.streets.map((item) => item.name).join(", ");
   const word = result.status === "on" ? "свет есть" : "света нет";
-  note.textContent = `${names}: ${word}. Запись видна на карте 6 часов.`;
+  const fresh = result.streets.some((item) => item.new);
+  note.textContent = fresh
+    ? `${names}: ${word}. Видно всем; цвет блёкнет, если никто не подтверждает.`
+    : `${names}: ${word}. Такая отметка уже учтена.`;
   document.querySelector("#comment").value = "";
   await pullLive();
 }
@@ -445,31 +451,6 @@ hereBtn.addEventListener("click", () => {
   );
 });
 
-document.querySelector("#download").addEventListener("click", () => {
-  const blob = new Blob([JSON.stringify(reports, null, 2)], { type: "application/json" });
-  const link = document.createElement("a");
-  link.href = URL.createObjectURL(blob);
-  link.download = "otmetki-sveta.json";
-  link.click();
-  URL.revokeObjectURL(link.href);
-});
-
-document.querySelector("#upload").addEventListener("change", async (event) => {
-  const file = event.target.files && event.target.files[0];
-  if (!file) return;
-  try {
-    const parsed = JSON.parse(await file.text());
-    if (!Array.isArray(parsed)) throw new Error("format");
-    reports = parsed.filter((item) => item && item.segment && (item.status === "on" || item.status === "off") && item.at);
-    saveReports();
-    paint();
-    markNote.textContent = `Загружено отметок: ${reports.length}.`;
-  } catch {
-    markNote.textContent = "Файл не разобрался. Нужен JSON, который скачала эта страница.";
-  }
-  event.target.value = "";
-});
-
 function addStreets(streets) {
   streets.features.forEach((feature) => {
     featuresBySegment.set(feature.properties.segment, feature);
@@ -506,6 +487,18 @@ function addStreets(streets) {
           ["any", ["==", ["feature-state", "power"], "on"], ["==", ["feature-state", "power"], "off"]],
           4.5,
           2.4,
+        ],
+        "line-opacity": [
+          "case",
+          ["boolean", ["feature-state", "selected"], false],
+          1,
+          ["==", ["feature-state", "level"], "stale"],
+          0.4,
+          ["==", ["feature-state", "level"], "schedule"],
+          0.6,
+          ["==", ["feature-state", "level"], "likely"],
+          0.75,
+          1,
         ],
       },
     },
