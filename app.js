@@ -7,6 +7,12 @@ const LEVEL_WORD = {
 
 const BULLETIN_SHOW_MS = 12 * 60 * 60 * 1000;
 
+// Вывод по соседям: отметка слабо красит ближайшие куски других улиц.
+const NEIGHBOR_R = 300;
+const NEIGHBOR_MIN = 0.12;
+const NEIGHBOR_MAX_STREET_M = 1500;
+const CELL = 0.0045;
+
 // Длина отмечаемого куска улицы вокруг нажатия: радиус в метрах, 0 = вся улица.
 const DEFAULT_SCOPE = 100;
 
@@ -51,6 +57,9 @@ let bulletin = null;
 let clockShift = 0;
 let featuresByKey = new Map();
 let autoByKey = new Map();
+let segInfo = new Map();
+let grid = new Map();
+let neighborBySegment = new Map();
 
 // Время сервера, чтобы возраст не зависел от часов на телефоне.
 function nowMs() {
@@ -75,15 +84,21 @@ function sourcesWord(count) {
   return `${count} источников`;
 }
 
-// Свежая отметка важнее графика. Если отметка выцвела, цвет даёт график,
-// а если и графика нет, остаётся блёклый цвет последней отметки.
-function stateOf(key) {
+// Свежая отметка важнее графика, график важнее вывода по соседям. Если ничего нет, улица зелёная
+// «по умолчанию»: так карта заполнена, и люди отмечают там, где света нет.
+function baselineKind() {
+  return bulletin && bulletin.kind === "all_on" && nowMs() - bulletin.at <= BULLETIN_SHOW_MS ? "bulletin" : "default";
+}
+
+function stateOf(key, segment) {
   const live = liveByKey.get(key) || null;
   if (live && live.level !== "stale") return { power: live.status, level: live.level, live };
   const plan = autoByKey.get(key);
   if (plan) return { power: plan, level: "schedule", live };
-  if (live) return { power: live.status, level: "stale", live };
-  return { power: "", level: "", live: null };
+  const near = segment ? neighborBySegment.get(segment) : null;
+  if (near) return { power: near.status, level: "neighbor", live, near };
+  if (live && !live.superseded_at) return { power: live.status, level: "stale", live };
+  return { power: "on", level: "baseline", live, base: baselineKind() };
 }
 
 function clock(ms) {
@@ -110,6 +125,18 @@ function describe(state) {
   }
   if (state.level === "stale") {
     return `${word(live.status)} ${ago(live.at)}, с тех пор никто не подтверждал.${restoredNote(live)} Цвет блёклый: верить с оглядкой.`;
+  }
+  if (state.level === "neighbor") {
+    const near = state.near;
+    const word2 = near.from.status === "on" ? "свет есть" : "света нет";
+    const dist = near.dist < 40 ? "рядом" : `примерно в ${Math.round(near.dist / 10) * 10} м`;
+    return `Прямых отметок по этой улице нет. По соседям: ${dist} на «${near.from.name}» ${word2} (${ago(near.from.at)}). Это вывод по соседям, а не отметка, на самом деле может быть иначе.`;
+  }
+  if (state.level === "baseline") {
+    if (state.base === "bulletin") {
+      return `Данных по этой улице нет. По сводке Донецкэнерго (${clock(bulletin.at)}) все подстанции запитаны, поэтому считаем, что свет есть. Это общая сводка по городу, а не отметка. Если света нет, отметьте.`;
+    }
+    return "Данных по этой улице нет, считаем по умолчанию, что свет есть. Если света нет, отметьте это кнопкой.";
   }
   return "Данных нет: ни графика, ни свежих отметок. Если знаешь, нажми кнопку.";
 }
@@ -232,15 +259,128 @@ function nearestOnStreet(key, lngLat) {
         const px = ax + dx * t;
         const py = ay + dy * t;
         const d = Math.hypot(px, py);
-        if (!best || d < best.d) best = { d, lon: lngLat.lng + px / kx, lat: lngLat.lat + py / ky };
+        if (!best || d < best.d) best = { d, lon: lngLat.lng + px / kx, lat: lngLat.lat + py / ky, segment: feature.properties.segment };
       }
     });
   });
   return best;
 }
 
+// Индекс кусков улиц по сетке: по нему быстро находятся соседи отметки.
+function samplePoints(feature) {
+  const pts = [];
+  linesOf(feature).forEach((line) => {
+    const step = Math.max(1, Math.ceil(line.length / 8));
+    for (let i = 0; i < line.length; i += step) pts.push(line[i]);
+    pts.push(line[line.length - 1]);
+  });
+  return pts;
+}
+
+function cellOf(lon, lat) {
+  return `${Math.floor(lon / CELL)}:${Math.floor(lat / CELL)}`;
+}
+
+function buildGeometryIndex(features) {
+  features.forEach((feature) => {
+    const segment = feature.properties.segment;
+    const pts = samplePoints(feature);
+    segInfo.set(segment, { key: feature.properties.key, pts });
+    new Set(pts.map(([x, y]) => cellOf(x, y))).forEach((cell) => {
+      if (!grid.has(cell)) grid.set(cell, []);
+      grid.get(cell).push(segment);
+    });
+  });
+}
+
+function candidatesNear(lon, lat, meters) {
+  const dLat = meters / 110540;
+  const dLon = meters / (111320 * Math.cos((lat * Math.PI) / 180));
+  const out = new Set();
+  for (let x = Math.floor((lon - dLon) / CELL); x <= Math.floor((lon + dLon) / CELL); x += 1) {
+    for (let y = Math.floor((lat - dLat) / CELL); y <= Math.floor((lat + dLat) / CELL); y += 1) {
+      (grid.get(`${x}:${y}`) || []).forEach((segment) => out.add(segment));
+    }
+  }
+  return out;
+}
+
+// Отметка со статусом «уверенно» или «скорее всего» слабо красит ближайшие куски других улиц:
+// до 0.6 от её уверенности рядом и ноль на расстоянии NEIGHBOR_R. Если рядом спорят «есть» и «нет»
+// и ни одна сторона не сильнее другой в полтора раза, кусок не красим.
+function computeNeighbors() {
+  const sources = [];
+  liveReports.forEach((report) => {
+    if (report.level === "stale") return;
+    const group = featuresByKey.get(report.key) || [];
+    const meters = group.reduce((sum, feature) => sum + (feature.properties.meters || 0), 0);
+    if (!group.length || meters > NEIGHBOR_MAX_STREET_M) return;
+    const pts = group.flatMap((feature) => (segInfo.get(feature.properties.segment) || { pts: [] }).pts);
+    sources.push({ key: report.key, status: report.status, conf: report.confidence, name: report.name, at: report.at, pts, radius: 0 });
+  });
+  livePlaces.forEach((place) => {
+    if (place.level === "stale") return;
+    sources.push({
+      key: place.key,
+      status: place.status,
+      conf: place.confidence,
+      name: place.name,
+      at: place.at,
+      center: [place.lon, place.lat],
+      radius: place.radius,
+    });
+  });
+
+  const best = new Map();
+  sources.forEach((source) => {
+    const found = new Set();
+    if (source.center) {
+      candidatesNear(source.center[0], source.center[1], source.radius + NEIGHBOR_R).forEach((segment) => found.add(segment));
+    } else {
+      source.pts.forEach(([x, y]) => candidatesNear(x, y, NEIGHBOR_R).forEach((segment) => found.add(segment)));
+    }
+    found.forEach((segment) => {
+      const info = segInfo.get(segment);
+      if (!info || info.key === source.key) return;
+      let d = Infinity;
+      if (source.center) {
+        info.pts.forEach((pt) => {
+          d = Math.min(d, distance(source.center, pt));
+        });
+        d = Math.max(0, d - source.radius);
+      } else {
+        source.pts.forEach((a) => info.pts.forEach((b) => {
+          d = Math.min(d, distance(a, b));
+        }));
+      }
+      if (d >= NEIGHBOR_R) return;
+      const conf = source.conf * 0.6 * (1 - d / NEIGHBOR_R);
+      if (conf < NEIGHBOR_MIN) return;
+      const slot = best.get(segment) || {};
+      if (!slot[source.status] || slot[source.status].conf < conf) {
+        slot[source.status] = { conf, dist: d, from: { name: source.name, status: source.status, at: source.at } };
+      }
+      best.set(segment, slot);
+    });
+  });
+
+  const result = new Map();
+  best.forEach((slot, segment) => {
+    let status;
+    if (slot.on && slot.off) {
+      if (slot.on.conf >= slot.off.conf * 1.5) status = "on";
+      else if (slot.off.conf >= slot.on.conf * 1.5) status = "off";
+      else return;
+    } else {
+      status = slot.on ? "on" : "off";
+    }
+    result.set(segment, { status, ...slot[status] });
+  });
+  neighborBySegment = result;
+}
+
 function applyState(segment, key) {
-  const state = stateOf(key);
+  const state = stateOf(key, segment);
   map.setFeatureState(
     { source: "streets", id: segment },
     { power: state.power, level: state.level, focused: key === focusKey }
@@ -263,7 +403,8 @@ function stateAt() {
       .sort((a, b) => b.at - a.at)[0];
     if (here) return { power: here.status, level: here.level, live: here };
   }
-  return stateOf(pick.key);
+  const found = nearestOnStreet(pick.key, { lng: pick.lon, lat: pick.lat });
+  return stateOf(pick.key, found && found.segment);
 }
 
 function scopeText() {
@@ -568,7 +709,10 @@ async function pullLive() {
   bulletin = data.bulletin || null;
   renderBulletin();
   renderPlaces();
-  if (featuresByKey.size) paint();
+  if (featuresByKey.size) {
+    computeNeighbors();
+    paint();
+  }
 }
 
 function telHref(phone) {
@@ -750,6 +894,7 @@ function addStreets(streets) {
     group.push(feature);
     featuresByKey.set(feature.properties.key, group);
   });
+  buildGeometryIndex(streets.features);
   const before = (map.getStyle().layers || []).find((layer) => layer.type === "symbol");
   const beforeId = before && before.id;
   const empty = { type: "FeatureCollection", features: [] };
@@ -806,6 +951,8 @@ function addStreets(streets) {
         ],
         "line-opacity": [
           "case",
+          ["any", ["==", ["feature-state", "level"], "baseline"], ["==", ["feature-state", "level"], "neighbor"]],
+          0,
           ["==", ["feature-state", "level"], "stale"],
           0.4,
           ["==", ["feature-state", "level"], "schedule"],
@@ -814,6 +961,37 @@ function addStreets(streets) {
           0.75,
           1,
         ],
+      },
+    },
+    beforeId
+  );
+  // Не настоящие отметки рисуем пунктиром: «по соседям» штрихами, «по сводке или по умолчанию» точками.
+  map.addLayer(
+    {
+      id: "streets-nbr",
+      type: "line",
+      source: "streets",
+      layout: { "line-cap": "butt" },
+      paint: {
+        "line-color": ["case", ["==", ["feature-state", "power"], "off"], "#b42318", "#1b7f4e"],
+        "line-width": 3.8,
+        "line-dasharray": [2, 1.4],
+        "line-opacity": ["case", ["==", ["feature-state", "level"], "neighbor"], 0.85, 0],
+      },
+    },
+    beforeId
+  );
+  map.addLayer(
+    {
+      id: "streets-base",
+      type: "line",
+      source: "streets",
+      layout: round,
+      paint: {
+        "line-color": "#1b7f4e",
+        "line-width": 2.8,
+        "line-dasharray": [0.1, 2.2],
+        "line-opacity": ["case", ["==", ["feature-state", "level"], "baseline"], 0.75, 0],
       },
     },
     beforeId

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Карта света — Донецк</title>
   <link rel="stylesheet" href="vendor/maplibre/maplibre-gl.css">
-  <link rel="stylesheet" href="styles.css?v=9">
+  <link rel="stylesheet" href="styles.css?v=10">
 </head>
 <body>
   <main id="map">
@@ -39,8 +39,9 @@
     <div class="legend legend-overlay">
       <span><i class="swatch on"></i>есть</span>
       <span><i class="swatch off"></i>нет</span>
-      <span><i class="swatch none"></i>нет данных</span>
       <span><i class="swatch fade"></i>блёклый: давно не подтверждали</span>
+      <span><i class="swatch nbr"></i>штрихи: по соседям</span>
+      <span><i class="swatch base"></i>точки: по сводке или по умолчанию</span>
     </div>
   </main>
   <aside>
@@ -62,6 +63,6 @@
     <p class="foot"><a href="about.html">О карте и источниках</a>. Линии улиц © участники OpenStreetMap.</p>
   </aside>
   <script src="vendor/maplibre/maplibre-gl.js"></script>
-  <script src="app.js?v=20"></script>
+  <script src="app.js?v=21"></script>
 </body>
 </html>
