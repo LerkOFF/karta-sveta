@@ -26,6 +26,7 @@ body {
 }
 
 #map {
+  position: relative;
   flex: 1;
   min-width: 0;
   background: #d7d1c6;
@@ -40,7 +41,8 @@ body {
 }
 
 aside {
-  width: 390px;
+  width: 340px;
+  flex: none;
   overflow: auto;
   border-left: 1px solid var(--line);
   background: var(--bg);
@@ -232,8 +234,109 @@ textarea {
 .swatch.pick { background: var(--pick); }
 .swatch.fade { background: linear-gradient(90deg, var(--on), var(--off)); opacity: 0.4; }
 
+/* Карточка отметки поверх карты. Высоты заданы, чтобы ничего не прыгало. */
+.card {
+  position: absolute;
+  z-index: 3;
+  top: 10px;
+  left: 56px;
+  width: min(360px, calc(100% - 66px));
+  padding: 12px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 4px 18px rgba(30, 26, 22, 0.18);
+}
+
+.search { position: relative; display: flex; gap: 8px; }
+.search input { flex: 1; min-width: 0; }
+.search .btn { flex: none; min-height: 0; margin: 0; padding: 0 12px; font-size: 14px; }
+
+.card .results {
+  position: absolute;
+  z-index: 4;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 4px;
+  box-shadow: 0 6px 18px rgba(30, 26, 22, 0.2);
+}
+
+.card .picked {
+  margin: 10px 0 8px;
+  min-height: 2.6em;
+  font-size: 16px;
+  line-height: 1.3;
+}
+
+.chips { display: flex; gap: 6px; margin-bottom: 8px; }
+.chips button {
+  flex: 1;
+  padding: 7px 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  font: 13px/1.2 ui-sans-serif, system-ui, sans-serif;
+  cursor: pointer;
+}
+.chips button.on { background: var(--pick); border-color: var(--pick); color: white; }
+
+.card .btn { min-height: 44px; }
+.card .note { height: 5.6em; margin: 8px 0 0; overflow: auto; }
+
+.bulletin.strip,
+#map > .bulletin {
+  position: absolute;
+  z-index: 2;
+  top: 10px;
+  right: 10px;
+  max-width: 300px;
+  margin: 0;
+  box-shadow: 0 4px 18px rgba(30, 26, 22, 0.18);
+}
+
+/* Правая панель: только контакты, ничего не меняется на лету. */
+.pills { display: flex; flex-wrap: wrap; gap: 8px; }
+.pill {
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--pick);
+  font: 14px/1.2 ui-sans-serif, system-ui, sans-serif;
+  text-decoration: none;
+}
+.hint {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font: 13px/1.4 ui-sans-serif, system-ui, sans-serif;
+}
+.call { padding: 9px 0; border-top: 1px solid var(--line); }
+.call strong { display: block; margin-bottom: 4px; font-size: 15px; font-weight: 600; }
+.phones { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.phones a {
+  color: var(--pick);
+  font: 15px/1.5 ui-sans-serif, system-ui, sans-serif;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.foot a { color: var(--pick); }
+
+/* Страница «О карте» */
+body.page { display: block; height: auto; }
+.about { max-width: 720px; margin: 0 auto; padding: 24px 18px 48px; }
+.about .eyebrow a { color: var(--pick); text-decoration: none; }
+.about .block { padding-left: 0; padding-right: 0; }
+
 @media (max-width: 800px) {
-  body { flex-direction: column; }
-  #map { height: 52vh; flex: none; }
-  aside { width: auto; border-left: 0; border-top: 1px solid var(--line); }
+  body { flex-direction: column; height: auto; }
+  #map { height: 78vh; min-height: 460px; flex: none; }
+  .card { padding: 10px; }
+  .card .picked { margin: 8px 0 6px; font-size: 15px; min-height: 2.6em; }
+  .card .note { height: 4.2em; }
+  .card .btn { min-height: 40px; }
+  aside { width: auto; overflow: visible; border-left: 0; border-top: 1px solid var(--line); }
+  .card { left: 52px; width: calc(100% - 62px); }
+  #map > .bulletin { top: auto; right: auto; left: 10px; bottom: 56px; max-width: calc(100% - 20px); }
 }

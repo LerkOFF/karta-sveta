@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 import bulletins
-from model import HORIZON_MIN, MIN_MS, assess
+from model import HORIZON_MIN, MIN_MS, assess, assess_places, distance_m
 
 ROOT = Path(__file__).resolve().parent
 DB = Path(os.environ.get("KARTA_DB") or ROOT / "data" / "karta.db")
@@ -25,6 +25,9 @@ CREATE TABLE IF NOT EXISTS reports (
     key TEXT NOT NULL,
     name TEXT NOT NULL,
     segment TEXT,
+    lon REAL,
+    lat REAL,
+    radius INTEGER,
     status TEXT NOT NULL CHECK (status IN ('on', 'off')),
     at INTEGER NOT NULL,
     saved_at INTEGER NOT NULL,
@@ -85,6 +88,10 @@ def reporter_id(salt: str, *parts: str) -> str:
 def init():
     with connect() as conn:
         conn.executescript(SCHEMA)
+        have = {row["name"] for row in conn.execute("PRAGMA table_info(reports)")}
+        for column, kind in (("lon", "REAL"), ("lat", "REAL"), ("radius", "INTEGER")):
+            if column not in have:
+                conn.execute(f"ALTER TABLE reports ADD COLUMN {column} {kind}")
     migrate_old()
 
 
@@ -116,24 +123,31 @@ def migrate_old():
     OLD_LIVE.rename(OLD_LIVE.with_name(OLD_LIVE.name + ".migrated"))
 
 
-def add(conn, street, status, kind, source, reporter, text="", at=None, ext_id=None, segment=None):
-    """Пишет отметку. Возвращает True, если записана, False, если это повтор."""
+def add(conn, street, status, kind, source, reporter, text="", at=None, ext_id=None, segment=None, place=None):
+    """Пишет отметку. Возвращает True, если записана, False, если это повтор.
+
+    place: (lon, lat, radius), если отметка про кусок улицы, а не про всю улицу.
+    """
     now = int(time.time() * 1000)
     at = int(at or now)
     key = street["key"]
     if ext_id:
         if conn.execute("SELECT 1 FROM reports WHERE ext_id = ? AND key = ?", (ext_id, key)).fetchone():
             return False
-    repeat = conn.execute(
-        "SELECT 1 FROM reports WHERE key = ? AND reporter = ? AND status = ? AND ABS(at - ?) < ?",
+    lon, lat, radius = place or (None, None, None)
+    near = conn.execute(
+        "SELECT lon, lat FROM reports WHERE key = ? AND reporter = ? AND status = ? AND ABS(at - ?) < ?",
         (key, reporter, status, at, REPEAT_MS),
-    ).fetchone()
-    if repeat:
-        return False
+    ).fetchall()
+    for row in near:
+        if lon is None and row["lon"] is None:
+            return False
+        if lon is not None and row["lon"] is not None and distance_m(lon, lat, row["lon"], row["lat"]) < 50:
+            return False
     conn.execute(
-        "INSERT INTO reports (key, name, segment, status, at, saved_at, kind, source, reporter, ext_id, text)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (key, street["name"], segment, status, at, now, kind, source[:80], reporter, ext_id, (text or "")[:240]),
+        "INSERT INTO reports (key, name, segment, lon, lat, radius, status, at, saved_at, kind, source, reporter, ext_id, text)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (key, street["name"], segment, lon, lat, radius, status, at, now, kind, source[:80], reporter, ext_id, (text or "")[:240]),
     )
     return True
 
@@ -173,10 +187,19 @@ def live(conn, now_ms=None):
     restored = bulletins.restored_at(clusters)
     rows = conn.execute("SELECT * FROM reports WHERE at >= ? ORDER BY key, at", (since,)).fetchall()
     by_key = {}
+    by_key_places = {}
     for row in rows:
-        by_key.setdefault(row["key"], []).append(dict(row))
+        item = dict(row)
+        if item["lon"] is None:
+            by_key.setdefault(row["key"], []).append(item)
+        else:
+            by_key_places.setdefault(row["key"], []).append(item)
     result = [assess(items, now_ms, restored) for items in by_key.values()]
     result = [item for item in result if item]
     result.sort(key=lambda item: item["at"], reverse=True)
+    places = []
+    for items in by_key_places.values():
+        places.extend(assess_places(items, now_ms, restored))
+    places.sort(key=lambda item: item["at"])
     latest = clusters[-1] if clusters else None
-    return {"reports": result, "bulletin": latest}
+    return {"reports": result, "places": places, "bulletin": latest}

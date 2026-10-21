@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from model import MIN_MS, assess
+from model import MIN_MS, assess, assess_places, distance_m, valid_point
 
 NOW = 1_800_000_000_000
 
@@ -87,6 +87,42 @@ class AssessTest(unittest.TestCase):
     def test_report_from_the_future_is_age_zero(self):
         result = assess([row(-5)], NOW)
         self.assertEqual(result["age_min"], 0)
+
+def place_row(minutes_ago, lon, lat, status="off", reporter="a", radius=200):
+    item = row(minutes_ago, status=status, reporter=reporter)
+    item.update({"lon": lon, "lat": lat, "radius": radius})
+    return item
+
+
+class PlacesTest(unittest.TestCase):
+    def test_distance(self):
+        self.assertAlmostEqual(distance_m(37.8, 48.0, 37.8, 48.001), 110.5, delta=1)
+
+    def test_valid_point(self):
+        self.assertTrue(valid_point(37.8, 48.0))
+        self.assertFalse(valid_point(30.5, 50.4))
+        self.assertFalse(valid_point("37.8", 48.0))
+
+    def test_far_apart_marks_are_two_places(self):
+        rows = [place_row(5, 37.80, 48.00, "off"), place_row(10, 37.80, 48.02, "on", reporter="b")]
+        places = assess_places(rows, NOW)
+        self.assertEqual([p["status"] for p in places], ["on", "off"])
+
+    def test_near_marks_merge_and_agree(self):
+        rows = [place_row(5, 37.8000, 48.0000, "off"), place_row(10, 37.8005, 48.0005, "off", reporter="b")]
+        places = assess_places(rows, NOW)
+        self.assertEqual(len(places), 1)
+        self.assertEqual(places[0]["sources"], 2)
+
+    def test_newest_mark_sets_the_place(self):
+        rows = [place_row(60, 37.8, 48.0, "off"), place_row(2, 37.8, 48.0, "on", reporter="b")]
+        places = assess_places(rows, NOW)
+        self.assertEqual(len(places), 1)
+        self.assertEqual(places[0]["status"], "on")
+        self.assertEqual(places[0]["radius"], 200)
+
+    def test_old_marks_dropped(self):
+        self.assertEqual(assess_places([place_row(25 * 60, 37.8, 48.0)], NOW), [])
 
 
 if __name__ == "__main__":

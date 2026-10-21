@@ -1,3 +1,4 @@
+// Карта света для жителей: смотреть и отмечать. Источники и «как считается» на about.html.
 const LEVEL_WORD = {
   sure: "уверенно",
   likely: "скорее всего",
@@ -6,6 +7,9 @@ const LEVEL_WORD = {
 
 const BULLETIN_SHOW_MS = 12 * 60 * 60 * 1000;
 
+// Длина отмечаемого куска улицы вокруг нажатия: радиус в метрах, 0 = вся улица.
+const DEFAULT_SCOPE = 100;
+
 const queryInput = document.querySelector("#query");
 const resultsEl = document.querySelector("#results");
 const pickedEl = document.querySelector("#picked");
@@ -13,12 +17,10 @@ const onBtn = document.querySelector("#on");
 const offBtn = document.querySelector("#off");
 const hereBtn = document.querySelector("#here");
 const markNote = document.querySelector("#mark-note");
-const feedEl = document.querySelector("#feed");
-const bannerEl = document.querySelector("#banner");
 const bulletinEl = document.querySelector("#bulletin");
-const autoEl = document.querySelector("#auto");
-const stepsEl = document.querySelector("#steps");
-const sourcesEl = document.querySelector("#sources");
+const chipsEl = document.querySelector("#scopes");
+const groupsEl = document.querySelector("#groups");
+const phonesEl = document.querySelector("#phones");
 
 const map = new maplibregl.Map({
   container: "map",
@@ -32,16 +34,17 @@ const map = new maplibregl.Map({
 map.addControl(new maplibregl.NavigationControl(), "top-left");
 
 let index = [];
-let selected = null;
+let pick = null;
+let scope = DEFAULT_SCOPE;
 let focusKey = null;
+let flash = "";
 let liveReports = [];
 let liveByKey = new Map();
+let livePlaces = [];
 let bulletin = null;
 let clockShift = 0;
-let featuresBySegment = new Map();
 let featuresByKey = new Map();
 let autoByKey = new Map();
-let autoNote = "";
 
 // Время сервера, чтобы возраст не зависел от часов на телефоне.
 function nowMs() {
@@ -75,19 +78,6 @@ function stateOf(key) {
   if (plan) return { power: plan, level: "schedule", live };
   if (live) return { power: live.status, level: "stale", live };
   return { power: "", level: "", live: null };
-}
-
-function activeKey() {
-  if (selected) return featuresBySegment.get(selected).properties.key;
-  return focusKey;
-}
-
-function applyState(segment, key) {
-  const state = stateOf(key);
-  map.setFeatureState(
-    { source: "streets", id: segment },
-    { power: state.power, level: state.level, selected: segment === selected, focused: key === activeKey() }
-  );
 }
 
 function clock(ms) {
@@ -135,22 +125,9 @@ function renderBulletin() {
       ? `Частично обесточены районы: ${found.districts.join(", ")}.`
       : "В некоторых районах Донецка пропал свет.";
     bulletinEl.className = "bulletin off";
-    bulletinEl.textContent = `${when}. ${where} По улицам эта сводка карту не красит.${sources}`;
+    bulletinEl.textContent = `${when}. ${where}${sources}`;
   }
   bulletinEl.hidden = false;
-}
-
-function paint() {
-  featuresBySegment.forEach((feature, segment) => {
-    applyState(segment, feature.properties.key);
-  });
-  renderFeed();
-  renderSelection();
-}
-
-function labelFor(props) {
-  if (props.parts > 1) return `${props.name}, участок ${props.part} из ${props.parts}`;
-  return props.name;
 }
 
 function boundsOf(features) {
@@ -169,105 +146,242 @@ function boundsOf(features) {
   return [[box[0], box[1]], [box[2], box[3]]];
 }
 
-function selectSegment(segment, fit) {
-  const feature = featuresBySegment.get(segment);
-  if (!feature) return;
-  selected = segment;
+function metersPerDegree(lat) {
+  return [111320 * Math.cos((lat * Math.PI) / 180), 110540];
+}
+
+function distance(a, b) {
+  const [kx, ky] = metersPerDegree((a[1] + b[1]) / 2);
+  return Math.hypot((a[0] - b[0]) * kx, (a[1] - b[1]) * ky);
+}
+
+function linesOf(feature) {
+  const geometry = feature.geometry;
+  return geometry.type === "MultiLineString" ? geometry.coordinates : [geometry.coordinates];
+}
+
+// Часть линии, которая лежит не дальше radius метров от center.
+function clipLine(coords, center, radius) {
+  const [kx, ky] = metersPerDegree(center[1]);
+  const pts = coords.map(([x, y]) => [(x - center[0]) * kx, (y - center[1]) * ky]);
+  const pieces = [];
+  let current = null;
+  for (let i = 0; i < pts.length - 1; i += 1) {
+    const [ax, ay] = pts[i];
+    const dx = pts[i + 1][0] - ax;
+    const dy = pts[i + 1][1] - ay;
+    const a = dx * dx + dy * dy;
+    const b = 2 * (ax * dx + ay * dy);
+    const c = ax * ax + ay * ay - radius * radius;
+    const disc = b * b - 4 * a * c;
+    if (a === 0 || disc < 0) {
+      current = null;
+      continue;
+    }
+    const root = Math.sqrt(disc);
+    const lo = Math.max(0, (-b - root) / (2 * a));
+    const hi = Math.min(1, (-b + root) / (2 * a));
+    if (lo > hi) {
+      current = null;
+      continue;
+    }
+    const at = (t) => [
+      coords[i][0] + (coords[i + 1][0] - coords[i][0]) * t,
+      coords[i][1] + (coords[i + 1][1] - coords[i][1]) * t,
+    ];
+    if (!current || lo > 0) {
+      current = [at(lo)];
+      pieces.push(current);
+    }
+    current.push(at(hi));
+    if (hi < 1) current = null;
+  }
+  return pieces;
+}
+
+function piecesOf(key, center, radius) {
+  const pieces = [];
+  (featuresByKey.get(key) || []).forEach((feature) => {
+    linesOf(feature).forEach((line) => {
+      if (radius) pieces.push(...clipLine(line, center, radius));
+      else pieces.push(line);
+    });
+  });
+  return pieces;
+}
+
+// Ближайшая к нажатию точка на линиях улицы.
+function nearestOnStreet(key, lngLat) {
+  const [kx, ky] = metersPerDegree(lngLat.lat);
+  let best = null;
+  (featuresByKey.get(key) || []).forEach((feature) => {
+    linesOf(feature).forEach((line) => {
+      for (let i = 0; i < line.length - 1; i += 1) {
+        const ax = (line[i][0] - lngLat.lng) * kx;
+        const ay = (line[i][1] - lngLat.lat) * ky;
+        const dx = (line[i + 1][0] - lngLat.lng) * kx - ax;
+        const dy = (line[i + 1][1] - lngLat.lat) * ky - ay;
+        const len = dx * dx + dy * dy;
+        const t = len ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / len)) : 0;
+        const px = ax + dx * t;
+        const py = ay + dy * t;
+        const d = Math.hypot(px, py);
+        if (!best || d < best.d) best = { d, lon: lngLat.lng + px / kx, lat: lngLat.lat + py / ky };
+      }
+    });
+  });
+  return best;
+}
+
+function applyState(segment, key) {
+  const state = stateOf(key);
+  map.setFeatureState(
+    { source: "streets", id: segment },
+    { power: state.power, level: state.level, focused: key === focusKey }
+  );
+}
+
+function paint() {
+  featuresByKey.forEach((group, key) => {
+    group.forEach((feature) => applyState(feature.properties.segment, key));
+  });
+  renderCard();
+}
+
+// Что известно про выбранное место: свежая отметка на этом куске, иначе общий цвет улицы.
+function stateAt() {
+  if (!pick) return null;
+  if (scope) {
+    const here = livePlaces
+      .filter((p) => p.key === pick.key && distance([pick.lon, pick.lat], [p.lon, p.lat]) <= p.radius)
+      .sort((a, b) => b.at - a.at)[0];
+    if (here) return { power: here.status, level: here.level, live: here };
+  }
+  return stateOf(pick.key);
+}
+
+function scopeText() {
+  if (!scope) return "вся улица";
+  return scope >= 500 ? "отрезок около 1 км" : `отрезок около ${scope * 2} м`;
+}
+
+function renderCard() {
+  chipsEl.querySelectorAll("button").forEach((button) => {
+    button.classList.toggle("on", Number(button.dataset.r) === scope);
+  });
+  onBtn.disabled = !pick;
+  offBtn.disabled = !pick;
+  if (pick) {
+    pickedEl.textContent = `${pick.name}, ${scopeText()}`;
+    markNote.textContent = flash || describe(stateAt());
+    return;
+  }
+  flash = "";
+  const item = focusKey ? index.find((row) => row.key === focusKey) : null;
+  pickedEl.textContent = item
+    ? `${item.name}: нажмите на карте нужное место улицы.`
+    : "Нажмите на карте на улицу, где хотите отметить свет.";
+  markNote.textContent = "";
+}
+
+function renderPlaces() {
+  const source = map.getSource("places");
+  if (!source) return;
+  const features = [];
+  livePlaces.forEach((place) => {
+    const lines = piecesOf(place.key, [place.lon, place.lat], place.radius);
+    if (!lines.length) return;
+    features.push({
+      type: "Feature",
+      properties: { status: place.status, level: place.level },
+      geometry: { type: "MultiLineString", coordinates: lines },
+    });
+  });
+  source.setData({ type: "FeatureCollection", features });
+}
+
+function renderPick() {
+  const source = map.getSource("pick");
+  if (!source) return;
+  const features = [];
+  if (pick) {
+    const lines = piecesOf(pick.key, [pick.lon, pick.lat], scope);
+    if (lines.length) {
+      features.push({ type: "Feature", properties: {}, geometry: { type: "MultiLineString", coordinates: lines } });
+    }
+    features.push({ type: "Feature", properties: {}, geometry: { type: "Point", coordinates: [pick.lon, pick.lat] } });
+  }
+  source.setData({ type: "FeatureCollection", features });
+}
+
+function setPick(next) {
+  pick = next;
   focusKey = null;
-  onBtn.disabled = false;
-  offBtn.disabled = false;
-  if (fit) map.fitBounds(boundsOf([feature]), { maxZoom: 17, padding: 48 });
+  flash = "";
+  renderPick();
   paint();
 }
 
 function focusStreet(item) {
   const group = featuresByKey.get(item.key) || [];
   if (!group.length) return;
-  selected = null;
+  pick = null;
   focusKey = item.key;
-  onBtn.disabled = true;
-  offBtn.disabled = true;
+  flash = "";
   map.fitBounds(boundsOf(group), { maxZoom: 16, padding: 48 });
+  renderPick();
   paint();
 }
 
-function renderSelection() {
-  if (!selected) {
-    if (focusKey) {
-      const item = index.find((row) => row.key === focusKey);
-      const parts = item ? item.parts : 0;
-      pickedEl.textContent = parts > 1
-        ? `${item.name}: ${parts} участков, вся улица подсвечена жёлтым. Нажми нужный участок на карте.`
-        : item.name;
-      markNote.textContent = `${describe(stateOf(focusKey))} Отметка относится ко всей улице.`;
-      return;
+function pickAt(point, lngLat) {
+  const hits = map.queryRenderedFeatures(
+    [
+      [point.x - 18, point.y - 18],
+      [point.x + 18, point.y + 18],
+    ],
+    { layers: ["streets-line"] }
+  );
+  if (!hits.length) {
+    flash = "";
+    markNote.textContent = "Рядом нет улицы. Нажмите ближе к линии улицы.";
+    return;
+  }
+  let best = null;
+  new Set(hits.map((hit) => hit.properties.key)).forEach((key) => {
+    const found = nearestOnStreet(key, lngLat);
+    if (found && (!best || found.d < best.d)) {
+      const name = hits.find((hit) => hit.properties.key === key).properties.name;
+      best = { d: found.d, key, name, lon: found.lon, lat: found.lat };
     }
-    pickedEl.textContent = "Нажми улицу на карте.";
-    markNote.textContent = "";
-    return;
-  }
-  const feature = featuresBySegment.get(selected);
-  const props = feature.properties;
-  pickedEl.textContent = labelFor(props);
-  markNote.textContent = `${describe(stateOf(props.key))} Твоя отметка относится ко всей улице.`;
-}
-
-function renderFeed() {
-  const rows = liveReports.slice(0, 12);
-  feedEl.replaceChildren();
-  if (!rows.length) {
-    const empty = document.createElement("li");
-    empty.textContent = "Свежих отметок пока нет. Киевский район идёт по графику.";
-    feedEl.append(empty);
-    return;
-  }
-  rows.forEach((item) => {
-    const li = document.createElement("li");
-    const button = document.createElement("button");
-    button.type = "button";
-    button.style.border = "0";
-    button.style.background = "transparent";
-    button.style.width = "100%";
-    button.style.textAlign = "left";
-    button.style.cursor = "pointer";
-    button.style.font = "15px/1.3 ui-sans-serif, system-ui, sans-serif";
-    const dot = document.createElement("i");
-    dot.className = `dot ${item.status} ${item.level}`;
-    const source = item.source ? ` · ${item.source}` : "";
-    button.append(
-      dot,
-      document.createTextNode(
-        `${item.name} · ${item.status === "on" ? "есть" : "нет"} · ${ago(item.at)} · ${LEVEL_WORD[item.level]}${source}`
-      )
-    );
-    button.addEventListener("click", () => {
-      const known = index.find((row) => row.key === item.key);
-      if (known) focusStreet(known);
-    });
-    li.append(button);
-    feedEl.append(li);
   });
+  if (best) setPick({ key: best.key, name: best.name, lon: best.lon, lat: best.lat });
 }
 
 function mark(status) {
-  if (!selected) return;
-  const feature = featuresBySegment.get(selected);
-  const props = feature.properties;
+  if (!pick) return;
+  const body = { key: pick.key, status };
+  if (scope) Object.assign(body, { lon: pick.lon, lat: pick.lat, radius: scope });
+  const where = `${pick.name}, ${scopeText()}`;
   fetch("api/mark", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ key: props.key, status, segment: props.segment }),
+    body: JSON.stringify(body),
   })
     .then(async (response) => {
       const result = await response.json();
       if (!result.ok) {
-        markNote.textContent = result.reason || "Отметка не принята.";
-        return;
+        flash = result.reason || "Отметка не принята.";
+      } else {
+        const word = status === "on" ? "свет есть" : "света нет";
+        const fresh = result.streets.some((item) => item.new);
+        flash = fresh ? `Спасибо: ${where}, ${word}. Видно всем.` : `${where}, ${word}: такая отметка уже учтена.`;
       }
+      renderCard();
       await pullLive();
     })
     .catch(() => {
-      markNote.textContent = "Сервер не ответил, отметка не сохранилась.";
+      flash = "Сервер не ответил, отметка не сохранилась.";
+      renderCard();
     });
 }
 
@@ -278,41 +392,68 @@ async function pullLive() {
   clockShift = Number(data.now) ? data.now - Date.now() : 0;
   liveReports = Array.isArray(data.reports) ? data.reports : [];
   liveByKey = new Map(liveReports.map((item) => [item.key, item]));
+  livePlaces = Array.isArray(data.places) ? data.places : [];
   bulletin = data.bulletin || null;
   renderBulletin();
-  const fresh = liveReports.filter((item) => item.level !== "stale").length;
-  autoEl.textContent = `${autoNote} Отметок за сутки по ${liveReports.length} улицам, из них свежих ${fresh}. Страница обновляется каждые 20 секунд.`;
-  if (featuresBySegment.size) paint();
+  renderPlaces();
+  if (featuresByKey.size) paint();
 }
 
-async function sendComment() {
-  const text = document.querySelector("#comment").value.trim();
-  const source = document.querySelector("#source").value.trim() || "чат";
-  const note = document.querySelector("#comment-note");
-  if (!text) {
-    note.textContent = "Вставь текст из группы.";
-    return;
-  }
-  const response = await fetch("api/comments", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, source }),
+function telHref(phone) {
+  return `tel:+${phone.replace(/\D/g, "")}`;
+}
+
+function phoneLinks(phones) {
+  const wrap = document.createElement("span");
+  wrap.className = "phones";
+  phones.forEach((phone) => {
+    const link = document.createElement("a");
+    link.href = telHref(phone);
+    link.textContent = phone;
+    wrap.append(link);
   });
-  const result = await response.json();
-  if (!result.ok) {
-    note.textContent = response.status === 429 || response.status === 413
-      ? result.reason
-      : "Нужны название улицы и слова «свет есть» или «света нет». Район целиком не красится.";
-    return;
-  }
-  const names = result.streets.map((item) => item.name).join(", ");
-  const word = result.status === "on" ? "свет есть" : "света нет";
-  const fresh = result.streets.some((item) => item.new);
-  note.textContent = fresh
-    ? `${names}: ${word}. Видно всем; цвет блёкнет, если никто не подтверждает.`
-    : `${names}: ${word}. Такая отметка уже учтена.`;
-  document.querySelector("#comment").value = "";
-  await pullLive();
+  return wrap;
+}
+
+function pill(title, url) {
+  const link = document.createElement("a");
+  link.className = "pill";
+  link.href = url;
+  link.target = "_blank";
+  link.rel = "noreferrer";
+  link.textContent = title;
+  return link;
+}
+
+function renderContacts(data) {
+  groupsEl.replaceChildren();
+  data.districts.forEach((district) => {
+    groupsEl.append(pill(district.name, `https://t.me/${district.channel}`));
+  });
+  data.city.links.forEach((item) => groupsEl.append(pill(item.title, item.url)));
+
+  phonesEl.replaceChildren();
+  const hint = document.createElement("p");
+  hint.className = "hint";
+  hint.textContent = data.hint;
+  const city = document.createElement("div");
+  city.className = "call";
+  const cityName = document.createElement("strong");
+  cityName.textContent = data.city.title;
+  city.append(cityName, phoneLinks(data.city.phones));
+  phonesEl.append(hint, city);
+  data.districts.forEach((district) => {
+    const row = document.createElement("div");
+    row.className = "call";
+    const name = document.createElement("strong");
+    name.textContent = `${district.name} район`;
+    row.append(name, phoneLinks(district.phones));
+    phonesEl.append(row);
+  });
+  const note = document.createElement("p");
+  note.className = "hint";
+  note.textContent = `Номера диспетчеров районов электросетей с сайта Донецкэнерго, сверено ${data.checked}.`;
+  phonesEl.append(note);
 }
 
 function norm(value) {
@@ -357,8 +498,7 @@ function search(value) {
     const li = document.createElement("li");
     const button = document.createElement("button");
     button.type = "button";
-    const extra = item.parts > 1 ? `, ${item.parts} участков` : "";
-    button.textContent = `${item.name}${extra}`;
+    button.textContent = item.name;
     button.addEventListener("click", () => {
       queryInput.value = item.name;
       resultsEl.hidden = true;
@@ -366,44 +506,6 @@ function search(value) {
     });
     li.append(button);
     resultsEl.append(li);
-  });
-}
-
-function renderSources(data) {
-  bannerEl.textContent = data.banner;
-  stepsEl.replaceChildren();
-  data.steps.forEach((step) => {
-    const li = document.createElement("li");
-    li.textContent = step;
-    stepsEl.append(li);
-  });
-  sourcesEl.replaceChildren();
-  data.sources.forEach((source) => {
-    const block = document.createElement("article");
-    block.className = "source";
-    const title = document.createElement("h3");
-    title.textContent = source.title;
-    const kind = document.createElement("p");
-    kind.className = "kind";
-    kind.textContent = source.kind;
-    const where = document.createElement("p");
-    const url = source.where.startsWith("http") ? source.where.split(" ")[0] : "";
-    if (url) {
-      const link = document.createElement("a");
-      link.href = url;
-      link.target = "_blank";
-      link.rel = "noreferrer";
-      link.textContent = url;
-      where.append(link);
-    } else {
-      where.textContent = source.where;
-    }
-    const take = document.createElement("p");
-    take.textContent = source.take;
-    const action = document.createElement("p");
-    action.textContent = source.action;
-    block.append(title, kind, where, take, action);
-    sourcesEl.append(block);
   });
 }
 
@@ -457,28 +559,158 @@ function scheduleNow(queues) {
   };
 }
 
-function pickStreet(point) {
-  const hits = map.queryRenderedFeatures(
-    [
-      [point.x - 18, point.y - 18],
-      [point.x + 18, point.y + 18],
-    ],
-    { layers: ["streets-line"] }
+function addStreets(streets) {
+  streets.features.forEach((feature) => {
+    const group = featuresByKey.get(feature.properties.key) || [];
+    group.push(feature);
+    featuresByKey.set(feature.properties.key, group);
+  });
+  const before = (map.getStyle().layers || []).find((layer) => layer.type === "symbol");
+  const beforeId = before && before.id;
+  const empty = { type: "FeatureCollection", features: [] };
+  map.addSource("streets", { type: "geojson", data: streets, promoteId: "segment" });
+  map.addSource("places", { type: "geojson", data: empty });
+  map.addSource("pick", { type: "geojson", data: empty });
+  const round = { "line-cap": "round", "line-join": "round" };
+  // Жёлтая подсветка под линиями: вся найденная улица видна на карте целиком.
+  map.addLayer(
+    {
+      id: "streets-focus",
+      type: "line",
+      source: "streets",
+      layout: round,
+      paint: {
+        "line-color": "#ffc933",
+        "line-width": 14,
+        "line-opacity": ["case", ["boolean", ["feature-state", "focused"], false], 0.85, 0],
+      },
+    },
+    beforeId
   );
-  if (!hits.length) {
-    markNote.textContent = "Рядом с нажатием нет улицы из выгрузки. Нажми серую черту.";
-    return;
-  }
-  selectSegment(hits[0].properties.segment, false);
+  // Синее свечение под выбранным куском.
+  map.addLayer(
+    {
+      id: "pick-glow",
+      type: "line",
+      source: "pick",
+      filter: ["==", ["geometry-type"], "LineString"],
+      layout: round,
+      paint: { "line-color": "#1d4f91", "line-width": ["interpolate", ["linear"], ["zoom"], 11, 20, 14, 18, 17, 16], "line-opacity": 0.55 },
+    },
+    beforeId
+  );
+  map.addLayer(
+    {
+      id: "streets-line",
+      type: "line",
+      source: "streets",
+      paint: {
+        "line-color": [
+          "case",
+          ["==", ["feature-state", "power"], "on"],
+          "#1b7f4e",
+          ["==", ["feature-state", "power"], "off"],
+          "#b42318",
+          "#8d867c",
+        ],
+        "line-width": [
+          "case",
+          ["any", ["==", ["feature-state", "power"], "on"], ["==", ["feature-state", "power"], "off"]],
+          4.5,
+          2.4,
+        ],
+        "line-opacity": [
+          "case",
+          ["==", ["feature-state", "level"], "stale"],
+          0.4,
+          ["==", ["feature-state", "level"], "schedule"],
+          0.6,
+          ["==", ["feature-state", "level"], "likely"],
+          0.75,
+          1,
+        ],
+      },
+    },
+    beforeId
+  );
+  // Отметки по куску улицы лежат поверх цвета всей улицы.
+  map.addLayer(
+    {
+      id: "places-line",
+      type: "line",
+      source: "places",
+      layout: round,
+      paint: {
+        "line-color": ["case", ["==", ["get", "status"], "on"], "#1b7f4e", "#b42318"],
+        "line-width": ["interpolate", ["linear"], ["zoom"], 11, 10, 14, 8, 17, 6],
+        "line-opacity": ["case", ["==", ["get", "level"], "stale"], 0.4, ["==", ["get", "level"], "likely"], 0.75, 1],
+      },
+    },
+    beforeId
+  );
+  map.addLayer(
+    {
+      id: "pick-point",
+      type: "circle",
+      source: "pick",
+      filter: ["==", ["geometry-type"], "Point"],
+      paint: {
+        "circle-radius": 7,
+        "circle-color": "#ffffff",
+        "circle-stroke-color": "#1d4f91",
+        "circle-stroke-width": 3,
+      },
+    },
+    beforeId
+  );
+  map.on("click", (event) => pickAt(event.point, event.lngLat));
+  map.on("mousemove", (event) => {
+    const near = map.queryRenderedFeatures(
+      [
+        [event.point.x - 10, event.point.y - 10],
+        [event.point.x + 10, event.point.y + 10],
+      ],
+      { layers: ["streets-line"] }
+    );
+    map.getCanvas().style.cursor = near.length ? "pointer" : "";
+  });
+  paint();
+}
+
+async function boot() {
+  const [indexResponse, streetResponse, queueResponse, contactResponse] = await Promise.all([
+    fetch("data/streets-index.json"),
+    fetch("data/streets.geojson"),
+    fetch("data/kyiv-queues.json"),
+    fetch("data/contacts.json"),
+  ]);
+  renderContacts(await contactResponse.json());
+  index = await indexResponse.json();
+  const streets = await streetResponse.json();
+  const queues = await queueResponse.json();
+  autoByKey = scheduleNow(queues).result;
+  const start = () => {
+    useRussianLabels();
+    addStreets(streets);
+    pullLive().catch(() => {});
+    setInterval(() => {
+      pullLive().catch(() => {});
+    }, 20000);
+  };
+  if (map.isStyleLoaded()) start();
+  else map.once("load", start);
 }
 
 queryInput.addEventListener("input", () => search(queryInput.value));
 onBtn.addEventListener("click", () => mark("on"));
 offBtn.addEventListener("click", () => mark("off"));
-document.querySelector("#send-comment").addEventListener("click", () => {
-  sendComment().catch(() => {
-    document.querySelector("#comment-note").textContent = "Сервер комментариев не ответил. Страницу надо открывать через python3 server.py.";
-  });
+chipsEl.addEventListener("click", (event) => {
+  const button = event.target.closest("button");
+  if (!button) return;
+  scope = Number(button.dataset.r);
+  flash = "";
+  renderPick();
+  renderCard();
 });
 hereBtn.addEventListener("click", () => {
   if (!navigator.geolocation) {
@@ -493,124 +725,12 @@ hereBtn.addEventListener("click", () => {
     },
     () => {
       hereBtn.disabled = false;
-      markNote.textContent = "Место не пришло. Нажми улицу на карте.";
+      markNote.textContent = "Место не пришло. Нажмите улицу на карте.";
     },
     { enableHighAccuracy: true, timeout: 8000 }
   );
 });
 
-function addStreets(streets) {
-  streets.features.forEach((feature) => {
-    featuresBySegment.set(feature.properties.segment, feature);
-    const group = featuresByKey.get(feature.properties.key) || [];
-    group.push(feature);
-    featuresByKey.set(feature.properties.key, group);
-  });
-  const before = (map.getStyle().layers || []).find((layer) => layer.type === "symbol");
-  map.addSource("streets", {
-    type: "geojson",
-    data: streets,
-    promoteId: "segment",
-  });
-  // Жёлтая подсветка под линиями: вся найденная улица видна на карте целиком.
-  map.addLayer(
-    {
-      id: "streets-focus",
-      type: "line",
-      source: "streets",
-      layout: { "line-cap": "round", "line-join": "round" },
-      paint: {
-        "line-color": "#ffc933",
-        "line-width": 14,
-        "line-opacity": ["case", ["boolean", ["feature-state", "focused"], false], 0.85, 0],
-      },
-    },
-    before && before.id
-  );
-  map.addLayer(
-    {
-      id: "streets-line",
-      type: "line",
-      source: "streets",
-      paint: {
-        "line-color": [
-          "case",
-          ["boolean", ["feature-state", "selected"], false],
-          "#1d4f91",
-          ["==", ["feature-state", "power"], "on"],
-          "#1b7f4e",
-          ["==", ["feature-state", "power"], "off"],
-          "#b42318",
-          "#8d867c",
-        ],
-        "line-width": [
-          "case",
-          ["boolean", ["feature-state", "selected"], false],
-          6,
-          ["any", ["==", ["feature-state", "power"], "on"], ["==", ["feature-state", "power"], "off"]],
-          4.5,
-          2.4,
-        ],
-        "line-opacity": [
-          "case",
-          ["boolean", ["feature-state", "selected"], false],
-          1,
-          ["==", ["feature-state", "level"], "stale"],
-          0.4,
-          ["==", ["feature-state", "level"], "schedule"],
-          0.6,
-          ["==", ["feature-state", "level"], "likely"],
-          0.75,
-          1,
-        ],
-      },
-    },
-    before && before.id
-  );
-  map.on("click", "streets-line", (event) => {
-    selectSegment(event.features[0].properties.segment, false);
-  });
-  map.on("click", (event) => {
-    const direct = map.queryRenderedFeatures(event.point, { layers: ["streets-line"] });
-    if (direct.length) return;
-    pickStreet(event.point);
-  });
-  map.on("mouseenter", "streets-line", () => {
-    map.getCanvas().style.cursor = "pointer";
-  });
-  map.on("mouseleave", "streets-line", () => {
-    map.getCanvas().style.cursor = "";
-  });
-  paint();
-}
-
-async function boot() {
-  const [sourceResponse, indexResponse, streetResponse, queueResponse] = await Promise.all([
-    fetch("data/sources.json"),
-    fetch("data/streets-index.json"),
-    fetch("data/streets.geojson"),
-    fetch("data/kyiv-queues.json"),
-  ]);
-  renderSources(await sourceResponse.json());
-  index = await indexResponse.json();
-  const streets = await streetResponse.json();
-  const queues = await queueResponse.json();
-  const schedule = scheduleNow(queues);
-  autoByKey = schedule.result;
-  autoNote = schedule.note;
-  autoEl.textContent = autoNote;
-  const start = () => {
-    useRussianLabels();
-    addStreets(streets);
-    pullLive().catch(() => {});
-    setInterval(() => {
-      pullLive().catch(() => {});
-    }, 20000);
-  };
-  if (map.isStyleLoaded()) start();
-  else map.once("load", start);
-}
-
 boot().catch(() => {
-  bannerEl.textContent = "Данные не загрузились. Открой страницу через локальный сервер, не как файл с диска.";
+  markNote.textContent = "Данные не загрузились. Обновите страницу.";
 });

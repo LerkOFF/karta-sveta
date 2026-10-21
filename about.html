@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>О карте света — Донецк</title>
+  <link rel="stylesheet" href="styles.css?v=8">
+</head>
+<body class="page">
+  <article class="about">
+    <p class="eyebrow"><a href="./">← К карте</a></p>
+    <h1>О карте света</h1>
+    <p id="banner" class="banner"></p>
+
+    <section class="block">
+      <h2>Что делать</h2>
+      <ol id="steps"></ol>
+    </section>
+
+    <section class="block">
+      <h2>Свежие отметки</h2>
+      <ul id="feed" class="feed"></ul>
+    </section>
+
+    <section class="block">
+      <h2>Откуда данные</h2>
+      <div id="sources"></div>
+    </section>
+
+    <section class="block">
+      <h2>Комментарий из чата</h2>
+      <p class="note">Для тех, кто ведёт карту: вставьте текст из группы, улица и статус определятся сами.</p>
+      <label class="field" for="source">Группа</label>
+      <input id="source" type="text" placeholder="Киевский чат" autocomplete="off">
+      <label class="field" for="comment">Текст</label>
+      <textarea id="comment" rows="3" placeholder="На Артёма нет света"></textarea>
+      <button id="send-comment" type="button" class="btn ghost">Добавить на карту</button>
+      <p id="comment-note" class="note"></p>
+    </section>
+
+    <p class="foot">Линии улиц © участники OpenStreetMap.</p>
+  </article>
+  <script src="about.js?v=1"></script>
+</body>
+</html>

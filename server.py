@@ -17,7 +17,7 @@ from pathlib import Path
 
 import bulletins
 import store
-from model import HORIZON_MIN, MIN_MS
+from model import DEFAULT_RADIUS, HORIZON_MIN, MIN_MS, PLACE_RADII, valid_point
 from parsing import KEYS, status_of, streets_in
 
 ROOT = Path(__file__).resolve().parent
@@ -33,6 +33,10 @@ PUBLIC_FILES = {
     "/data/streets-index.json": "data/streets-index.json",
     "/data/kyiv-queues.json": "data/kyiv-queues.json",
     "/data/sources.json": "data/sources.json",
+    "/data/contacts.json": "data/contacts.json",
+    "/about": "about.html",
+    "/about.html": "about.html",
+    "/about.js": "about.js",
 }
 LONG_CACHE = ("/vendor/", "/data/streets")
 
@@ -87,6 +91,7 @@ def add_reports(
     at=None,
     ext_id=None,
     segment=None,
+    place=None,
 ):
     """Находит улицы и статус в тексте (или берёт готовые key и status) и пишет в базу."""
     found_status = status if status in ("on", "off") else status_of(text)
@@ -120,6 +125,7 @@ def add_reports(
                 at=at,
                 ext_id=ext_id,
                 segment=segment,
+                place=place,
             )
             saved.append({"key": street["key"], "name": street["name"], "new": new})
     return {"ok": True, "status": found_status, "streets": saved}
@@ -226,6 +232,14 @@ class Handler(BaseHTTPRequestHandler):
                 at=now,
             )
         else:
+            place = None
+            lon, lat = payload.get("lon"), payload.get("lat")
+            if lon is not None or lat is not None:
+                if not valid_point(lon, lat):
+                    self.send_json({"ok": False, "reason": "точка вне Донецка"})
+                    return
+                radius = payload.get("radius")
+                place = (float(lon), float(lat), radius if radius in PLACE_RADII else DEFAULT_RADIUS)
             result = add_reports(
                 str(payload.get("text") or ""),
                 "кнопка на карте",
@@ -235,6 +249,7 @@ class Handler(BaseHTTPRequestHandler):
                 key=str(payload.get("key") or ""),
                 at=now,
                 segment=str(payload.get("segment") or "") or None,
+                place=place,
             )
         self.send_json(result)
 

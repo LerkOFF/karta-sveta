@@ -3,6 +3,8 @@
 Чистые функции без базы и сети: их можно проверять отдельно (tests/test_model.py).
 """
 
+import math
+
 MIN_MS = 60 * 1000
 
 # Через сколько минут уверенность в отметке падает вдвое.
@@ -96,3 +98,56 @@ def assess(rows, now_ms: int, restored_at=None):
         "superseded_at": superseded_at,
         "source": latest["source"],
     }
+
+
+# Отметка с точкой на карте красит кусок улицы вокруг точки. Допустимые длины куска, метры.
+PLACE_RADII = (100, 200, 500)
+DEFAULT_RADIUS = 100
+
+# Границы Донецка с запасом: точки за ними не принимаем.
+BOX = (37.45, 47.83, 38.07, 48.16)
+
+
+def distance_m(lon1, lat1, lon2, lat2) -> float:
+    kx = 111320 * math.cos(math.radians((lat1 + lat2) / 2))
+    return math.hypot((lon1 - lon2) * kx, (lat1 - lat2) * 110540)
+
+
+def valid_point(lon, lat) -> bool:
+    return (
+        isinstance(lon, (int, float))
+        and isinstance(lat, (int, float))
+        and BOX[0] <= lon <= BOX[2]
+        and BOX[1] <= lat <= BOX[3]
+    )
+
+
+def assess_places(rows, now_ms: int, restored_at=None):
+    """rows: отметки с точкой (ещё lon, lat, radius) по одной улице.
+
+    Идём от новых к старым: самая новая отметка задаёт кусок улицы, все более старые
+    в пределах её радиуса считаются подтверждением или спором к ней. Старая отметка
+    за пределами радиуса даёт свой кусок. Возвращает куски от старых к новым, чтобы
+    на карте новый лежал сверху.
+    """
+    rows = sorted(
+        (row for row in rows if now_ms - row["at"] < HORIZON_MIN * MIN_MS),
+        key=lambda row: row["at"],
+        reverse=True,
+    )
+    places = []
+    left = rows
+    while left:
+        anchor = left[0]
+        near = [
+            row
+            for row in left
+            if distance_m(anchor["lon"], anchor["lat"], row["lon"], row["lat"]) <= anchor["radius"]
+        ]
+        left = [row for row in left if row not in near]
+        result = assess(near, now_ms, restored_at)
+        if result:
+            result.update({"lon": anchor["lon"], "lat": anchor["lat"], "radius": anchor["radius"]})
+            places.append(result)
+    places.reverse()
+    return places

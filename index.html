@@ -5,68 +5,56 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Карта света — Донецк</title>
   <link rel="stylesheet" href="vendor/maplibre/maplibre-gl.css">
-  <link rel="stylesheet" href="styles.css?v=6">
+  <link rel="stylesheet" href="styles.css?v=8">
 </head>
 <body>
-  <div id="map">
-    <div class="legend legend-overlay">
-      <span><i class="swatch on"></i>есть</span>
-      <span><i class="swatch off"></i>нет</span>
-      <span><i class="swatch none"></i>нет данных</span>
-      <span><i class="swatch fade"></i>блёклый: график или давно не подтверждали</span>
-      <span><i class="swatch pick"></i>выбрана</span>
-    </div>
-  </div>
-  <aside>
-    <header class="mast">
-      <p class="eyebrow">Донецк</p>
-      <h1>Карта света</h1>
-      <p id="banner" class="banner"></p>
-      <p id="bulletin" class="bulletin" hidden></p>
-      <p id="auto" class="note"></p>
-    </header>
-
-    <section class="block">
-      <label class="field" for="query">Улица</label>
-      <input id="query" type="search" placeholder="Артёма" autocomplete="off">
-      <ul id="results" class="results" hidden></ul>
-      <p id="picked" class="picked">Нажми улицу на карте.</p>
+  <main id="map">
+    <section class="card">
+      <div class="search">
+        <input id="query" type="search" placeholder="Найти улицу" autocomplete="off" aria-label="Улица">
+        <button id="here" type="button" class="btn ghost">Моё место</button>
+        <ul id="results" class="results" hidden></ul>
+      </div>
+      <p id="picked" class="picked">Нажмите на карте на улицу, где хотите отметить свет.</p>
+      <div id="scopes" class="chips" role="group" aria-label="Длина участка">
+        <button type="button" data-r="100" class="on">200 м</button>
+        <button type="button" data-r="200">400 м</button>
+        <button type="button" data-r="500">1 км</button>
+        <button type="button" data-r="0">вся улица</button>
+      </div>
       <div class="actions">
         <button id="on" type="button" class="btn on" disabled>Свет есть</button>
         <button id="off" type="button" class="btn off" disabled>Света нет</button>
       </div>
-      <button id="here" type="button" class="btn ghost">Моё место</button>
       <p id="mark-note" class="note"></p>
     </section>
+    <p id="bulletin" class="bulletin" hidden></p>
+    <div class="legend legend-overlay">
+      <span><i class="swatch on"></i>есть</span>
+      <span><i class="swatch off"></i>нет</span>
+      <span><i class="swatch none"></i>нет данных</span>
+      <span><i class="swatch fade"></i>блёклый: давно не подтверждали</span>
+    </div>
+  </main>
+  <aside>
+    <header class="mast">
+      <p class="eyebrow">Донецк</p>
+      <h1>Карта света</h1>
+    </header>
 
     <section class="block">
-      <h2>Комментарий из чата</h2>
-      <label class="field" for="source">Группа</label>
-      <input id="source" type="text" placeholder="Киевский чат" autocomplete="off">
-      <label class="field" for="comment">Текст</label>
-      <textarea id="comment" rows="3" placeholder="На Артёма нет света"></textarea>
-      <button id="send-comment" type="button" class="btn ghost">Добавить на карту</button>
-      <p id="comment-note" class="note"></p>
+      <h2>Группы</h2>
+      <div id="groups" class="pills"></div>
     </section>
 
     <section class="block">
-      <h2>Свежие отметки</h2>
-      <ul id="feed" class="feed"></ul>
+      <h2>Куда звонить</h2>
+      <div id="phones"></div>
     </section>
 
-    <section class="block">
-      <h2>Что делать</h2>
-      <ol id="steps"></ol>
-    </section>
-
-    <section class="block">
-      <h2>Откуда данные</h2>
-      <div id="sources"></div>
-    </section>
-
-    <p class="foot">Линии улиц © участники OpenStreetMap. Плитки подложки грузятся из сети.</p>
+    <p class="foot"><a href="about.html">О карте и источниках</a>. Линии улиц © участники OpenStreetMap.</p>
   </aside>
   <script src="vendor/maplibre/maplibre-gl.js"></script>
-  <script src="app.js?v=12"></script>
+  <script src="app.js?v=16"></script>
 </body>
 </html>
