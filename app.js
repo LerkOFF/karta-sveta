@@ -77,11 +77,16 @@ function stateOf(key) {
   return { power: "", level: "", live: null };
 }
 
+function activeKey() {
+  if (selected) return featuresBySegment.get(selected).properties.key;
+  return focusKey;
+}
+
 function applyState(segment, key) {
   const state = stateOf(key);
   map.setFeatureState(
     { source: "streets", id: segment },
-    { power: state.power, level: state.level, selected: segment === selected }
+    { power: state.power, level: state.level, selected: segment === selected, focused: key === activeKey() }
   );
 }
 
@@ -192,7 +197,7 @@ function renderSelection() {
       const item = index.find((row) => row.key === focusKey);
       const parts = item ? item.parts : 0;
       pickedEl.textContent = parts > 1
-        ? `${item.name}: ${parts} участков. Нажми нужный на карте.`
+        ? `${item.name}: ${parts} участков, вся улица подсвечена жёлтым. Нажми нужный участок на карте.`
         : item.name;
       markNote.textContent = `${describe(stateOf(focusKey))} Отметка относится ко всей улице.`;
       return;
@@ -507,6 +512,21 @@ function addStreets(streets) {
     data: streets,
     promoteId: "segment",
   });
+  // Жёлтая подсветка под линиями: вся найденная улица видна на карте целиком.
+  map.addLayer(
+    {
+      id: "streets-focus",
+      type: "line",
+      source: "streets",
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: {
+        "line-color": "#ffc933",
+        "line-width": 14,
+        "line-opacity": ["case", ["boolean", ["feature-state", "focused"], false], 0.85, 0],
+      },
+    },
+    before && before.id
+  );
   map.addLayer(
     {
       id: "streets-line",
