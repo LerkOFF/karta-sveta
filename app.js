@@ -19,6 +19,9 @@ const hereBtn = document.querySelector("#here");
 const markNote = document.querySelector("#mark-note");
 const bulletinEl = document.querySelector("#bulletin");
 const chipsEl = document.querySelector("#scopes");
+const fromInput = document.querySelector("#h-from");
+const toInput = document.querySelector("#h-to");
+const housesBtn = document.querySelector("#h-go");
 const groupsEl = document.querySelector("#groups");
 const phonesEl = document.querySelector("#phones");
 
@@ -38,6 +41,9 @@ let pick = null;
 let scope = DEFAULT_SCOPE;
 let focusKey = null;
 let flash = "";
+// Выбор по номерам домов: {label, count}. Пока он есть, scope это радиус, посчитанный по домам.
+let houses = null;
+const houseCache = new Map();
 let liveReports = [];
 let liveByKey = new Map();
 let livePlaces = [];
@@ -261,18 +267,20 @@ function stateAt() {
 }
 
 function scopeText() {
+  if (houses) return `дома ${houses.label}`;
   if (!scope) return "вся улица";
   return scope >= 500 ? "отрезок около 1 км" : `отрезок около ${scope * 2} м`;
 }
 
 function renderCard() {
   chipsEl.querySelectorAll("button").forEach((button) => {
-    button.classList.toggle("on", Number(button.dataset.r) === scope);
+    button.classList.toggle("on", !houses && Number(button.dataset.r) === scope);
   });
   onBtn.disabled = !pick;
   offBtn.disabled = !pick;
   if (pick) {
-    pickedEl.textContent = `${pick.name}, ${scopeText()}`;
+    const count = houses ? ` (${housesWord(houses.count)})` : "";
+    pickedEl.textContent = `${pick.name}, ${scopeText()}${count}`;
     markNote.textContent = flash || describe(stateAt());
     return;
   }
@@ -309,15 +317,36 @@ function renderPick() {
     if (lines.length) {
       features.push({ type: "Feature", properties: {}, geometry: { type: "MultiLineString", coordinates: lines } });
     }
-    features.push({ type: "Feature", properties: {}, geometry: { type: "Point", coordinates: [pick.lon, pick.lat] } });
+    if (houses) {
+      houses.items.forEach(([number, lon, lat]) => {
+        features.push({ type: "Feature", properties: { house: true, n: number }, geometry: { type: "Point", coordinates: [lon, lat] } });
+      });
+    } else {
+      features.push({ type: "Feature", properties: {}, geometry: { type: "Point", coordinates: [pick.lon, pick.lat] } });
+    }
   }
   source.setData({ type: "FeatureCollection", features });
+}
+
+function housesWord(count) {
+  const last = count % 10;
+  const tens = count % 100;
+  if (last === 1 && tens !== 11) return `${count} дом`;
+  if (last >= 2 && last <= 4 && (tens < 10 || tens >= 20)) return `${count} дома`;
+  return `${count} домов`;
+}
+
+function clearHouses() {
+  houses = null;
+  fromInput.value = "";
+  toInput.value = "";
 }
 
 function setPick(next) {
   pick = next;
   focusKey = null;
   flash = "";
+  clearHouses();
   renderPick();
   paint();
 }
@@ -326,6 +355,7 @@ function focusStreet(item) {
   const group = featuresByKey.get(item.key) || [];
   if (!group.length) return;
   pick = null;
+  clearHouses();
   focusKey = item.key;
   flash = "";
   map.fitBounds(boundsOf(group), { maxZoom: 16, padding: 48 });
@@ -357,10 +387,108 @@ function pickAt(point, lngLat) {
   if (best) setPick({ key: best.key, name: best.name, lon: best.lon, lat: best.lat });
 }
 
+function houseNumber(text) {
+  const match = String(text).match(/^\s*(\d+)/);
+  return match ? Number(match[1]) : null;
+}
+
+// Дома, лежащие цепочкой не дальше 350 м друг от друга, считаем одним участком улицы.
+function clusterHouses(list, gap = 350) {
+  const parent = list.map((_, i) => i);
+  const find = (i) => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+  for (let i = 0; i < list.length; i += 1) {
+    for (let j = i + 1; j < list.length; j += 1) {
+      if (distance([list[i][1], list[i][2]], [list[j][1], list[j][2]]) <= gap) parent[find(i)] = find(j);
+    }
+  }
+  const groups = new Map();
+  list.forEach((row, i) => {
+    const root = find(i);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root).push(row);
+  });
+  return [...groups.values()];
+}
+
+async function loadHouses(key) {
+  if (!houseCache.has(key)) {
+    const response = await fetch(`api/houses?key=${encodeURIComponent(key)}`);
+    const data = await response.json();
+    houseCache.set(key, data.houses || []);
+  }
+  return houseCache.get(key);
+}
+
+// Дома с номерами от и до: красим кусок улицы, который их накрывает.
+async function applyHouses() {
+  const key = pick ? pick.key : focusKey;
+  const item = key ? index.find((row) => row.key === key) : null;
+  if (!item) {
+    flash = "";
+    markNote.textContent = "Сначала найдите улицу по названию или нажмите на неё на карте.";
+    return;
+  }
+  const from = houseNumber(fromInput.value);
+  const to = houseNumber(toInput.value);
+  if (from === null) {
+    markNote.textContent = "Введите номер дома или два номера: с какого по какой.";
+    return;
+  }
+  const low = Math.min(from, to === null ? from : to);
+  const high = Math.max(from, to === null ? from : to);
+  const label = low === high ? String(low) : `${low}–${high}`;
+  const matching = (await loadHouses(key)).filter((row) => {
+    const number = houseNumber(row[0]);
+    return number !== null && number >= low && number <= high;
+  });
+  if (!matching.length) {
+    flash = "";
+    markNote.textContent = `На улице ${item.name} домов ${label} в картах OpenStreetMap нет. Отметьте кусок улицы кнопками выше.`;
+    return;
+  }
+  // Одно название может носить несколько далёких участков: берём тот, что ближе к нажатию, иначе самый большой.
+  const groups = clusterHouses(matching);
+  let chosen = groups[0];
+  let notice = "";
+  if (groups.length > 1) {
+    const ref = pick ? [pick.lon, pick.lat] : null;
+    const reachTo = (group) => Math.min(...group.map((row) => distance(ref, [row[1], row[2]])));
+    groups.sort((x, y) => (ref ? reachTo(x) - reachTo(y) : y.length - x.length));
+    chosen = groups[0];
+    notice = ref
+      ? "Такие номера есть в нескольких местах улицы, выбрано ближайшее к вашему нажатию."
+      : "Такие номера есть в нескольких местах улицы, выбрано самое большое. Чтобы выбрать другое, нажмите на нужное место улицы и введите номера снова.";
+  }
+  const snapped = chosen
+    .map(([, lon, lat]) => nearestOnStreet(key, { lng: lon, lat }))
+    .filter(Boolean);
+  const lons = snapped.map((point) => point.lon);
+  const lats = snapped.map((point) => point.lat);
+  const center = [(Math.min(...lons) + Math.max(...lons)) / 2, (Math.min(...lats) + Math.max(...lats)) / 2];
+  const reach = Math.max(...snapped.map((point) => distance(center, [point.lon, point.lat])));
+  houses = { label, count: chosen.length, items: chosen };
+  pick = { key, name: item.name, lon: center[0], lat: center[1] };
+  scope = Math.min(2000, Math.max(50, Math.ceil(reach) + 25));
+  focusKey = null;
+  flash = notice;
+  const all = chosen.map(([, lon, lat]) => [lon, lat]).concat(snapped.map((point) => [point.lon, point.lat]));
+  const box = all.reduce(
+    (acc, [x, y]) => [Math.min(acc[0], x), Math.min(acc[1], y), Math.max(acc[2], x), Math.max(acc[3], y)],
+    [180, 90, -180, -90]
+  );
+  map.fitBounds([[box[0], box[1]], [box[2], box[3]]], {
+    maxZoom: 18,
+    padding: { top: window.innerWidth > 800 ? 260 : 60, bottom: 60, left: 60, right: 60 },
+  });
+  renderPick();
+  paint();
+}
+
 function mark(status) {
   if (!pick) return;
   const body = { key: pick.key, status };
   if (scope) Object.assign(body, { lon: pick.lon, lat: pick.lat, radius: scope });
+  if (scope && houses) body.label = `дома ${houses.label}`;
   const where = `${pick.name}, ${scopeText()}`;
   fetch("api/mark", {
     method: "POST",
@@ -476,8 +604,16 @@ function norm(value) {
     .trim();
 }
 
+// «Артёма 10-24», «Артёма дома 10–24», «Артёма 14»: улица и номера домов в одной строке.
+function splitHouses(value) {
+  const match = value.match(/^(.*?)[\s,]+(?:дома?\.?\s*)?(\d+)\s*[а-яa-z]?(?:\s*[-–—]\s*(\d+)\s*[а-яa-z]?)?\s*$/i);
+  if (!match || norm(match[1]).length < 2) return { street: value, from: "", to: "" };
+  return { street: match[1], from: match[2], to: match[3] || "" };
+}
+
 function search(value) {
-  const needle = norm(value);
+  const parsed = splitHouses(value);
+  const needle = norm(parsed.street);
   resultsEl.replaceChildren();
   if (needle.length < 2) {
     resultsEl.hidden = true;
@@ -503,6 +639,11 @@ function search(value) {
       queryInput.value = item.name;
       resultsEl.hidden = true;
       focusStreet(item);
+      if (parsed.from) {
+        fromInput.value = parsed.from;
+        toInput.value = parsed.to;
+        applyHouses();
+      }
     });
     li.append(button);
     resultsEl.append(li);
@@ -653,7 +794,7 @@ function addStreets(streets) {
       id: "pick-point",
       type: "circle",
       source: "pick",
-      filter: ["==", ["geometry-type"], "Point"],
+      filter: ["all", ["==", ["geometry-type"], "Point"], ["!", ["has", "house"]]],
       paint: {
         "circle-radius": 7,
         "circle-color": "#ffffff",
@@ -663,6 +804,33 @@ function addStreets(streets) {
     },
     beforeId
   );
+  map.addLayer({
+    id: "pick-houses",
+    type: "circle",
+    source: "pick",
+    filter: ["has", "house"],
+    paint: {
+      "circle-radius": 4.5,
+      "circle-color": "#1d4f91",
+      "circle-stroke-color": "#ffffff",
+      "circle-stroke-width": 1.5,
+    },
+  });
+  map.addLayer({
+    id: "pick-house-labels",
+    type: "symbol",
+    source: "pick",
+    minzoom: 15,
+    filter: ["has", "house"],
+    layout: {
+      "text-field": ["get", "n"],
+      "text-font": ["Noto Sans Bold"],
+      "text-size": 13,
+      "text-offset": [0, -1.1],
+      "text-allow-overlap": true,
+    },
+    paint: { "text-color": "#1d4f91", "text-halo-color": "#ffffff", "text-halo-width": 2 },
+  });
   map.on("click", (event) => pickAt(event.point, event.lngLat));
   map.on("mousemove", (event) => {
     const near = map.queryRenderedFeatures(
@@ -709,8 +877,18 @@ chipsEl.addEventListener("click", (event) => {
   if (!button) return;
   scope = Number(button.dataset.r);
   flash = "";
+  if (houses) {
+    clearHouses();
+    renderPick();
+  }
   renderPick();
   renderCard();
+});
+housesBtn.addEventListener("click", () => applyHouses());
+[fromInput, toInput].forEach((input) => {
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") applyHouses();
+  });
 });
 hereBtn.addEventListener("click", () => {
   if (!navigator.geolocation) {

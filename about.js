@@ -78,7 +78,7 @@ function renderFeed(rows) {
     const dot = document.createElement("i");
     dot.className = `dot ${item.status} ${item.level}`;
     const source = item.source ? ` · ${item.source}` : "";
-    const part = item.radius ? " · кусок улицы" : "";
+    const part = item.label ? ` · ${item.label}` : item.radius ? " · кусок улицы" : "";
     li.append(
       dot,
       document.createTextNode(

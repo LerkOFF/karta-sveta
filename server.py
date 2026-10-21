@@ -14,10 +14,11 @@ import time
 from collections import defaultdict, deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import bulletins
 import store
-from model import DEFAULT_RADIUS, HORIZON_MIN, MIN_MS, PLACE_RADII, valid_point
+from model import HORIZON_MIN, MIN_MS, clean_radius, valid_point
 from parsing import KEYS, status_of, streets_in
 
 ROOT = Path(__file__).resolve().parent
@@ -50,6 +51,14 @@ RATE_LIMIT = 30
 RATE_WINDOW = 10 * 60
 _hits = defaultdict(deque)
 _hits_lock = threading.Lock()
+
+def load_houses():
+    path = ROOT / "data" / "houses.json"
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+
+
+# {ключ улицы: [[номер, lon, lat], ...]}: см. scripts/build_houses.py
+HOUSES = load_houses()
 
 SECRET = store.load_secret()
 store.init()
@@ -178,6 +187,10 @@ class Handler(BaseHTTPRequestHandler):
                 state = store.live(conn)
             self.send_json({"now": int(time.time() * 1000), **state})
             return
+        if path == "/api/houses":
+            key = parse_qs(urlsplit(self.path).query).get("key", [""])[0]
+            self.send_json({"key": key, "houses": HOUSES.get(key, [])})
+            return
         if path == "/api/health":
             self.send_json({"ok": True})
             return
@@ -238,10 +251,9 @@ class Handler(BaseHTTPRequestHandler):
                 if not valid_point(lon, lat):
                     self.send_json({"ok": False, "reason": "точка вне Донецка"})
                     return
-                radius = payload.get("radius")
-                place = (float(lon), float(lat), radius if radius in PLACE_RADII else DEFAULT_RADIUS)
+                place = (float(lon), float(lat), clean_radius(payload.get("radius")))
             result = add_reports(
-                str(payload.get("text") or ""),
+                str(payload.get("label") or "")[:40] if place else "",
                 "кнопка на карте",
                 "button",
                 who,

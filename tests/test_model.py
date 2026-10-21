@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from model import MIN_MS, assess, assess_places, distance_m, valid_point
+from model import MIN_MS, assess, assess_places, clean_radius, distance_m, valid_point
 
 NOW = 1_800_000_000_000
 
@@ -120,6 +120,14 @@ class PlacesTest(unittest.TestCase):
         self.assertEqual(len(places), 1)
         self.assertEqual(places[0]["status"], "on")
         self.assertEqual(places[0]["radius"], 200)
+
+    def test_clean_radius(self):
+        self.assertEqual(clean_radius(200), 200)
+        self.assertEqual(clean_radius(380.4), 380)
+        self.assertEqual(clean_radius(5), 30)
+        self.assertEqual(clean_radius(99999), 2000)
+        self.assertEqual(clean_radius("x"), 100)
+        self.assertEqual(clean_radius(None), 100)
 
     def test_old_marks_dropped(self):
         self.assertEqual(assess_places([place_row(25 * 60, 37.8, 48.0)], NOW), [])

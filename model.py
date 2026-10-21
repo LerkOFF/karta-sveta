@@ -100,8 +100,10 @@ def assess(rows, now_ms: int, restored_at=None):
     }
 
 
-# Отметка с точкой на карте красит кусок улицы вокруг точки. Допустимые длины куска, метры.
-PLACE_RADII = (100, 200, 500)
+# Отметка с точкой на карте красит кусок улицы вокруг точки. Радиус куска, метры:
+# кнопки 100, 200, 500, а для «дома с … по …» страница считает свой.
+MIN_RADIUS = 30
+MAX_RADIUS = 2000
 DEFAULT_RADIUS = 100
 
 # Границы Донецка с запасом: точки за ними не принимаем.
@@ -111,6 +113,12 @@ BOX = (37.45, 47.83, 38.07, 48.16)
 def distance_m(lon1, lat1, lon2, lat2) -> float:
     kx = 111320 * math.cos(math.radians((lat1 + lat2) / 2))
     return math.hypot((lon1 - lon2) * kx, (lat1 - lat2) * 110540)
+
+
+def clean_radius(value) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return DEFAULT_RADIUS
+    return int(min(MAX_RADIUS, max(MIN_RADIUS, round(value))))
 
 
 def valid_point(lon, lat) -> bool:
@@ -147,7 +155,14 @@ def assess_places(rows, now_ms: int, restored_at=None):
         left = [row for row in left if row not in near]
         result = assess(near, now_ms, restored_at)
         if result:
-            result.update({"lon": anchor["lon"], "lat": anchor["lat"], "radius": anchor["radius"]})
+            result.update(
+                {
+                    "lon": anchor["lon"],
+                    "lat": anchor["lat"],
+                    "radius": anchor["radius"],
+                    "label": anchor.get("text") or "",
+                }
+            )
             places.append(result)
     places.reverse()
     return places

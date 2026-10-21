@@ -282,6 +282,17 @@ textarea {
 }
 .chips button.on { background: var(--pick); border-color: var(--pick); color: white; }
 
+.houses {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  font: 14px/1.2 ui-sans-serif, system-ui, sans-serif;
+  color: var(--muted);
+}
+.houses input[type="text"] { width: 64px; padding: 8px; font-size: 15px; text-align: center; }
+.card .houses .btn { flex: 1; min-height: 0; margin: 0; padding: 9px 8px; font-size: 14px; }
+
 .card .btn { min-height: 44px; }
 .card .note { height: 5.6em; margin: 8px 0 0; overflow: auto; }
 
