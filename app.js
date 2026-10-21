@@ -279,7 +279,7 @@ function renderCard() {
   onBtn.disabled = !pick;
   offBtn.disabled = !pick;
   if (pick) {
-    const count = houses ? ` (${housesWord(houses.count)})` : "";
+    const count = houses ? (houses.estimated ? " (примерно)" : ` (${housesWord(houses.count)})`) : "";
     pickedEl.textContent = `${pick.name}, ${scopeText()}${count}`;
     markNote.textContent = flash || describe(stateAt());
     return;
@@ -410,6 +410,43 @@ function clusterHouses(list, gap = 350) {
   return [...groups.values()];
 }
 
+// Дома нет в OSM: ставим примерное место по соседним номерам. Между ближайшими известными
+// домами номера раскладываем по прямой, если с одной стороны дома нет, берём ближайший известный.
+function guessHouses(list, low, high, label) {
+  const numbered = list
+    .map((row) => ({ row, n: houseNumber(row[0]) }))
+    .filter((item) => item.n !== null);
+  const below = numbered.filter((item) => item.n < low).sort((a, b) => b.n - a.n).slice(0, 6);
+  const above = numbered.filter((item) => item.n > high).sort((a, b) => a.n - b.n).slice(0, 6);
+  let best = null;
+  below.forEach((a) => {
+    above.forEach((b) => {
+      const gap = distance([a.row[1], a.row[2]], [b.row[1], b.row[2]]);
+      if (gap <= 1200 && (!best || gap < best.gap)) best = { a, b, gap };
+    });
+  });
+  if (best) {
+    const at = (n) => {
+      const t = (n - best.a.n) / (best.b.n - best.a.n);
+      return [best.a.row[1] + (best.b.row[1] - best.a.row[1]) * t, best.a.row[2] + (best.b.row[2] - best.a.row[2]) * t];
+    };
+    const items = [[`~${low}`, ...at(low)]];
+    if (high !== low) items.push([`~${high}`, ...at(high)]);
+    return {
+      items,
+      note: `Домов ${label} в OpenStreetMap нет. Отмечено примерное место между домами ${best.a.n} и ${best.b.n}.`,
+    };
+  }
+  const near = [below[0], above[0]]
+    .filter(Boolean)
+    .sort((a, b) => Math.abs(a.n - low) - Math.abs(b.n - low))[0];
+  if (!near) return null;
+  return {
+    items: [near.row],
+    note: `Домов ${label} в OpenStreetMap нет, ближайший известный дом ${near.row[0]}. Отмечено место около него: если оно не то, нажмите на нужное место улицы.`,
+  };
+}
+
 async function loadHouses(key) {
   if (!houseCache.has(key)) {
     const response = await fetch(`api/houses?key=${encodeURIComponent(key)}`);
@@ -437,19 +474,26 @@ async function applyHouses() {
   const low = Math.min(from, to === null ? from : to);
   const high = Math.max(from, to === null ? from : to);
   const label = low === high ? String(low) : `${low}–${high}`;
-  const matching = (await loadHouses(key)).filter((row) => {
+  const known = await loadHouses(key);
+  let matching = known.filter((row) => {
     const number = houseNumber(row[0]);
     return number !== null && number >= low && number <= high;
   });
+  let estimate = "";
   if (!matching.length) {
-    flash = "";
-    markNote.textContent = `На улице ${item.name} домов ${label} в картах OpenStreetMap нет. Отметьте кусок улицы кнопками выше.`;
-    return;
+    const guess = guessHouses(known, low, high, label);
+    if (!guess) {
+      flash = "";
+      markNote.textContent = `На улице ${item.name} домов ${label} в картах OpenStreetMap нет. Отметьте кусок улицы кнопками выше.`;
+      return;
+    }
+    matching = guess.items;
+    estimate = guess.note;
   }
   // Одно название может носить несколько далёких участков: берём тот, что ближе к нажатию, иначе самый большой.
-  const groups = clusterHouses(matching);
+  const groups = estimate ? [matching] : clusterHouses(matching);
   let chosen = groups[0];
-  let notice = "";
+  let notice = estimate;
   if (groups.length > 1) {
     const ref = pick ? [pick.lon, pick.lat] : null;
     const reachTo = (group) => Math.min(...group.map((row) => distance(ref, [row[1], row[2]])));
@@ -466,7 +510,7 @@ async function applyHouses() {
   const lats = snapped.map((point) => point.lat);
   const center = [(Math.min(...lons) + Math.max(...lons)) / 2, (Math.min(...lats) + Math.max(...lats)) / 2];
   const reach = Math.max(...snapped.map((point) => distance(center, [point.lon, point.lat])));
-  houses = { label, count: chosen.length, items: chosen };
+  houses = { label, count: chosen.length, items: chosen, estimated: Boolean(estimate) };
   pick = { key, name: item.name, lon: center[0], lat: center[1] };
   scope = Math.min(2000, Math.max(50, Math.ceil(reach) + 25));
   focusKey = null;
