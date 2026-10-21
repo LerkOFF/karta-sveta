@@ -400,12 +400,15 @@ function scheduleNow(queues) {
   const onCount = [...result.values()].filter((value) => value === "on").length;
   const offCount = [...result.values()].filter((value) => value === "off").length;
   const clock = now.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
-  const extended = today > queues.publishedUntil
-    ? " Карточки публиковали до 16 октября, дальше круг тот же."
-    : "";
+  if (today > queues.publishedUntil) {
+    return {
+      result: new Map(),
+      note: `Сейчас ${clock}. График Киевского района действовал до ${queues.publishedUntil.split("-").reverse().join(".")}, новой карточки нет, по графику улицы не красим.`,
+    };
+  }
   return {
     result,
-    note: `Сейчас ${clock}. Само закрасилось ${onCount} улиц со светом и ${offCount} без света, Киевский район.${extended}`,
+    note: `Сейчас ${clock}. По графику закрасилось ${onCount} улиц со светом и ${offCount} без света, Киевский район, график объявлен до ${queues.publishedUntil.split("-").reverse().join(".")}.`,
   };
 }
 
