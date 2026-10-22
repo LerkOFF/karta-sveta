@@ -23,6 +23,8 @@ const onBtn = document.querySelector("#on");
 const offBtn = document.querySelector("#off");
 const hereBtn = document.querySelector("#here");
 const markNote = document.querySelector("#mark-note");
+const mapEl = document.querySelector("#map");
+const unpickBtn = document.querySelector("#unpick");
 const bulletinEl = document.querySelector("#bulletin");
 const chipsEl = document.querySelector("#scopes");
 const fromInput = document.querySelector("#h-from");
@@ -419,6 +421,7 @@ function renderCard() {
   });
   onBtn.disabled = !pick;
   offBtn.disabled = !pick;
+  mapEl.classList.toggle("picking", !!pick);
   if (pick) {
     const count = houses ? (houses.estimated ? " (примерно)" : ` (${housesWord(houses.count)})`) : "";
     pickedEl.textContent = `${pick.name}, ${scopeText()}${count}`;
@@ -491,6 +494,8 @@ function setPick(next) {
   renderPick();
   paint();
 }
+
+unpickBtn.addEventListener("click", () => setPick(null));
 
 function focusStreet(item) {
   const group = featuresByKey.get(item.key) || [];

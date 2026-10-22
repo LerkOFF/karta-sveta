@@ -342,14 +342,56 @@ body.page { display: block; height: auto; }
 .about .eyebrow a { color: var(--pick); text-decoration: none; }
 .about .block { padding-left: 0; padding-right: 0; }
 
+.card .close { display: none; }
+
+/* Телефон: карта почти на весь экран. Пока улица не выбрана, сверху только поиск,
+   после выбора карточка уходит вниз листом и не закрывает то, что нажали. */
 @media (max-width: 800px) {
   body { flex-direction: column; height: auto; }
-  #map { height: 78vh; min-height: 460px; flex: none; }
-  .card { padding: 10px; }
-  .card .picked { margin: 8px 0 6px; font-size: 15px; min-height: 2.6em; }
-  .card .note { height: 4.2em; }
+  #map { height: 88vh; height: 88svh; min-height: 460px; flex: none; }
+  .card { top: 10px; left: 52px; width: calc(100% - 62px); padding: 8px; }
+  .card .picked,
+  .card .chips,
+  .card .houses,
+  .card .actions,
+  .card .note { display: none; }
+  .search .btn { min-height: 40px; }
+  .search input { min-height: 40px; }
+
+  #map.picking .card {
+    top: auto;
+    bottom: 8px;
+    left: 8px;
+    width: calc(100% - 16px);
+    padding: 10px;
+    padding-right: 40px;
+  }
+  #map.picking .card .picked { display: block; margin: 0 0 6px; min-height: 0; font-size: 15px; }
+  #map.picking .card .chips,
+  #map.picking .card .houses { display: flex; }
+  #map.picking .card .actions { display: flex; }
+  #map.picking .card .note { display: block; height: auto; min-height: 1.4em; max-height: 4.2em; font-size: 13px; }
+  #map.picking .card .search { display: none; }
+  #map.picking .card .close {
+    display: block;
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 36px;
+    height: 36px;
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    font-size: 26px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  #map.picking .legend-overlay,
+  #map.picking > .bulletin { display: none; }
+
   .card .btn { min-height: 40px; }
+  .legend-overlay { bottom: 24px; font-size: 11px; line-height: 1.2; }
+  .legend-overlay span { margin-right: 6px; }
   aside { width: auto; overflow: visible; border-left: 0; border-top: 1px solid var(--line); }
-  .card { left: 52px; width: calc(100% - 62px); }
   #map > .bulletin { top: auto; right: auto; left: 10px; bottom: 56px; max-width: calc(100% - 20px); }
 }
