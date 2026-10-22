@@ -25,6 +25,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG = ROOT / "data" / "chats.json"
 
+# Если задан --only, вступаем только в эти чаты.
+ONLY = []
+
 # Дешёвый фильтр, чтобы не слать на сервер болтовню. Решает всё равно сервер.
 WORDS = ("свет", "электр", "выруб", "отключ", "включ", "погас", "темно", "дали")
 MAX_TEXT = 1500
@@ -102,6 +105,8 @@ async def join_chats(client, config):
 
     for ref in config["chats"]:
         text = str(ref)
+        if ONLY and text not in ONLY:
+            continue
         try:
             if "joinchat/" in text or "/+" in text or text.startswith("+"):
                 invite = text.rsplit("/", 1)[-1].lstrip("+")
@@ -150,14 +155,18 @@ async def run(config, check_only, join_only=False):
 
     since = datetime.now(timezone.utc) - timedelta(hours=float(config.get("backfill_hours", 6)))
     for entity, title in chats:
-        async for message in client.iter_messages(entity):
-            if message.date < since:
-                break
-            payload = to_payload(
-                message.text, title, entity.id, message.id, message.sender_id, message.date.timestamp()
-            )
-            if payload:
-                await send(config, payload)
+        # В чат, куда ещё не приняли, историю не прочитать: это не ошибка службы.
+        try:
+            async for message in client.iter_messages(entity):
+                if message.date < since:
+                    break
+                payload = to_payload(
+                    message.text, title, entity.id, message.id, message.sender_id, message.date.timestamp()
+                )
+                if payload:
+                    await send(config, payload)
+        except Exception as error:
+            print(f"историю {title} прочитать нельзя: {type(error).__name__}", flush=True)
 
     @client.on(events.NewMessage(chats=[entity for entity, _ in chats]))
     async def on_message(event):
@@ -178,8 +187,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--config", default=str(CONFIG))
     parser.add_argument("--check", action="store_true", help="только войти и показать, какие чаты найдены")
+    parser.add_argument("--only", nargs="+", help="с --join: вступить только в эти чаты")
     parser.add_argument("--join", action="store_true", help="вступить в чаты из списка (по одному, с паузами) и выйти")
     args = parser.parse_args()
+    ONLY[:] = args.only or []
     asyncio.run(run(load_config(args.config), args.check, args.join))
 
 
