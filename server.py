@@ -38,6 +38,12 @@ PUBLIC_FILES = {
     "/about": "about.html",
     "/about.html": "about.html",
     "/about.js": "about.js",
+    "/favicon.ico": "favicon.ico",
+    "/favicon.svg": "favicon.svg",
+    "/favicon-120.png": "favicon-120.png",
+    "/apple-touch-icon.png": "apple-touch-icon.png",
+    "/robots.txt": "robots.txt",
+    "/sitemap.xml": "sitemap.xml",
 }
 LONG_CACHE = ("/vendor/", "/data/streets")
 
