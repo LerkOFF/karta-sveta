@@ -156,17 +156,25 @@ async def run(config, check_only, join_only=False):
     since = datetime.now(timezone.utc) - timedelta(hours=float(config.get("backfill_hours", 6)))
     for entity, title in chats:
         # В чат, куда ещё не приняли, историю не прочитать: это не ошибка службы.
+        seen = 0
+        about_light = 0
+        newest = None
         try:
             async for message in client.iter_messages(entity):
                 if message.date < since:
                     break
+                seen += 1
+                newest = newest or message.date
                 payload = to_payload(
                     message.text, title, entity.id, message.id, message.sender_id, message.date.timestamp()
                 )
                 if payload:
+                    about_light += 1
                     await send(config, payload)
+            last = newest.astimezone().strftime("%d.%m %H:%M") if newest else "-"
+            print(f"ИТОГ {title}: за {config.get('backfill_hours', 6)} ч прочитано {seen}, про свет {about_light}, последнее {last}", flush=True)
         except Exception as error:
-            print(f"историю {title} прочитать нельзя: {type(error).__name__}", flush=True)
+            print(f"ИТОГ {title}: историю прочитать нельзя ({type(error).__name__})", flush=True)
 
     @client.on(events.NewMessage(chats=[entity for entity, _ in chats]))
     async def on_message(event):
