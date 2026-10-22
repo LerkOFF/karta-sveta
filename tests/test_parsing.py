@@ -45,6 +45,22 @@ class ParsingTest(unittest.TestCase):
         )
         self.assertEqual(streets_in(news), [])
 
+    def test_planned_announcement_is_not_a_report(self):
+        text = "22 октября, с 10:00 до 15:00, планируется отключение электроэнергии по следующим адресам: пл. Конституции, 1 ул. 50-летия СССР, 37, 95"
+        self.assertIsNone(status_of(text))
+
+    def test_long_address_list_is_not_a_report(self):
+        text = "нет света: Артёма, Маршака, Собинова, Киевский, Советская, Наметкина"
+        self.assertEqual(streets_in(text), [])
+
+    def test_short_report_with_time_still_works(self):
+        self.assertEqual(status_of("Университетская 59 нет света с 5 утра"), "off")
+
+    def test_punctuation_next_to_street(self):
+        for text in ("Артёма, нет света", "нет света (Артёма)", "«Артёма» нет света.", "Артёма: нет света!!"):
+            self.assertEqual([item["key"] for item in streets_in(text)], ["артема"], text)
+            self.assertEqual(status_of(text), "off", text)
+
     def test_question_is_not_a_report(self):
         self.assertIsNone(to_payload("на Артёма нет света?", "чат", 1, 1, 2, 0))
         self.assertIsNotNone(to_payload("на Артёма нет света", "чат", 1, 2, 2, 0))

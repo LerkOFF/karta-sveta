@@ -62,6 +62,8 @@ def norm(name: str) -> str:
     for word in STOP:
         text = text.replace(word, " ")
     text = text.replace("’", "").replace("'", "").replace("-", "")
+    # Запятая, точка, кавычки и скобки не часть названия: «на Артёма, нет света».
+    text = re.sub(r"[^\w\s]", " ", text)
     return " ".join(text.split())
 
 
@@ -101,9 +103,28 @@ EXCEPT_MARKS = ("кроме", "за исключением", "исключая")
 LIGHT_WORDS = re.compile(r"\bсвет\w{0,2}\b|электр|обесточ|темно")
 
 
+# Плановое объявление («22 октября с 10:00 до 15:00 планируется отключение по адресам»)
+# описывает будущее и перечисляет много улиц, это не отметка «сейчас».
+PLANNED_MARKS = (
+    "планиру",
+    "запланир",
+    "плановое",
+    "плановые",
+    "по следующим адресам",
+    "по графику",
+    "будет отключ",
+    "будут отключ",
+    "будет отсутств",
+)
+TIME_RANGE = re.compile(r"\d{1,2}\s*[:.]\s*\d{2}\s*(?:до|-|–|—)\s*\d{1,2}\s*[:.]\s*\d{2}")
+MAX_STREETS_IN_REPORT = 4
+
+
 def status_of(text: str):
     folded = norm(text)
     if any(mark in folded for mark in EXCEPT_MARKS):
+        return None
+    if any(mark in folded for mark in PLANNED_MARKS) or TIME_RANGE.search(folded):
         return None
     if not LIGHT_WORDS.search(folded):
         return None
@@ -136,6 +157,8 @@ def streets_in(text: str):
         found.append({"key": key, "name": name})
         used.add(key)
         padded = padded.replace(token, " ")
+    if len(found) > MAX_STREETS_IN_REPORT:
+        return []
     if found:
         return found
     words = padded.split()
