@@ -39,7 +39,6 @@ const groupsEl = document.querySelector("#groups");
 const phonesEl = document.querySelector("#phones");
 const watchEl = document.querySelector("#watch");
 const watchText = document.querySelector("#watch-text");
-const watchBtn = document.querySelector("#watch-btn");
 const watchOffBtn = document.querySelector("#watch-off");
 
 // Тот же ключ, что на странице «О карте»: там датчик можно отключить по токену.
@@ -61,8 +60,7 @@ let pick = null;
 let scope = DEFAULT_SCOPE;
 let focusKey = null;
 let flash = "";
-// Датчик «следить за этим местом»: предложение после «Свет есть», ответ сервера о моём датчике, сообщение.
-let watchOffer = false;
+// Датчик, который сервер сам подключает при отметке: ответ сервера о моём датчике и сообщение.
 let watchInfo = null;
 let watchMsg = "";
 // Выбор по номерам домов: {label, count}. Пока он есть, scope это радиус, посчитанный по домам.
@@ -478,18 +476,9 @@ function watchStatus() {
 }
 
 function renderWatch() {
-  const offer = watchOffer && !!pick;
   const mine = !!(watchInfo && watchInfo.ok);
-  watchEl.hidden = !(offer || mine || watchMsg);
-  const parts = [];
-  if (watchMsg) parts.push(watchMsg);
-  else if (mine) parts.push(watchStatus());
-  if (offer && !watchMsg) {
-    parts.push("Дома белый статический IP? Карта будет сама пинговать ваш роутер раз в 5 минут и отмечать, есть ли свет. Нажимайте дома, из домашнего Wi-Fi.");
-  }
-  watchText.textContent = parts.join(" ");
-  watchBtn.hidden = !offer;
-  watchBtn.textContent = mine ? "Перенести датчик сюда" : "Следить за этим местом";
+  watchEl.hidden = !(mine || watchMsg);
+  watchText.textContent = watchMsg || (mine ? watchStatus() : "");
   watchOffBtn.hidden = !mine;
 }
 
@@ -509,33 +498,6 @@ async function refreshWatch() {
   if (result.state === "gone") saveToken("");
   watchInfo = result.ok ? result : null;
   renderWatch();
-}
-
-async function watchHere() {
-  if (!pick) return;
-  watchBtn.disabled = true;
-  try {
-    const response = await fetch("api/watch", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key: pick.key, lon: pick.lon, lat: pick.lat, token: savedToken(), net: connectionKind() }),
-    });
-    const result = await response.json();
-    if (!result.ok) {
-      watchMsg = result.reason || "Датчик не подключился.";
-    } else {
-      saveToken(result.token);
-      watchOffer = false;
-      watchMsg = "Принято. Через сутки откройте карту из дома: если IP не изменился, датчик включится.";
-      await refreshWatch();
-      return;
-    }
-  } catch (error) {
-    watchMsg = "Сервер не ответил.";
-  } finally {
-    watchBtn.disabled = false;
-    renderWatch();
-  }
 }
 
 async function watchOff() {
@@ -717,7 +679,6 @@ function clearHouses() {
 
 function setPick(next) {
   pick = next;
-  watchOffer = false;
   watchMsg = "";
   focusKey = null;
   flash = "";
@@ -939,7 +900,7 @@ async function applyHouses() {
 
 function mark(status) {
   if (!pick) return;
-  const body = { key: pick.key, status };
+  const body = { key: pick.key, status, token: savedToken(), net: connectionKind() };
   if (scope) Object.assign(body, { lon: pick.lon, lat: pick.lat, radius: scope });
   if (scope && houses) body.label = `дома ${houses.label}`;
   else if (scope === HOUSE_SCOPE && pick.house) body.label = `дом ${pick.house}`;
@@ -957,8 +918,7 @@ function mark(status) {
         const word = status === "on" ? "свет есть" : "света нет";
         const fresh = result.streets.some((item) => item.new);
         flash = fresh ? `Спасибо: ${where}, ${word}. Видно всем.` : `${where}, ${word}: такая отметка уже учтена.`;
-        watchOffer = status === "on";
-        watchMsg = "";
+        if (result.sensor) saveToken(result.sensor);
       }
       renderCard();
       await pullLive();
@@ -1489,9 +1449,6 @@ async function boot() {
 }
 
 queryInput.addEventListener("input", () => search(queryInput.value));
-watchBtn.addEventListener("click", () => {
-  watchHere().catch(() => {});
-});
 watchOffBtn.addEventListener("click", () => {
   watchOff().catch(() => {
     watchMsg = "Сервер не ответил.";

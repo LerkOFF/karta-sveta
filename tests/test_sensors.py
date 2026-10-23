@@ -271,15 +271,6 @@ class DatabaseTest(unittest.TestCase):
             self.assertEqual(sensors.due_pings(conn, NOW + 2 * MIN_MS), [])
             self.assertEqual(len(sensors.due_pings(conn, NOW + 5 * MIN_MS)), 1)
 
-    def test_reenroll_restarts_probation_and_keeps_token(self):
-        with store.connect() as conn:
-            token = sensors.create(conn, "ping", STREET, 37.8, 48.0, "o", NOW, ip="8.8.8.8", alive=True)
-            other = {"key": "кирова", "name": "Кирова"}
-            self.assertTrue(sensors.reenroll(conn, token, other, 37.7, 48.1, "1.1.1.1", NOW + MIN_MS))
-            row = sensors.by_token(conn, token)
-            self.assertEqual((row["key"], row["ip"], row["confirmed"], row["state"]), ("кирова", "1.1.1.1", 0, None))
-            self.assertFalse(sensors.reenroll(conn, "нет такого", other, 37.7, 48.1, "1.1.1.1", NOW))
-
     def test_check_unknown_or_pulse_token(self):
         with store.connect() as conn:
             pulse = sensors.create(conn, "pulse", STREET, 37.8, 48.0, "o", NOW)

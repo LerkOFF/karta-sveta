@@ -289,18 +289,6 @@ def create(
     return token
 
 
-def reenroll(conn, token: str, street, lon: float, lat: float, ip: str, now_ms: int, asn=None) -> bool:
-    """Тот же человек (токен) подключает ping-датчик заново: другое место или другой IP, снова испытание."""
-    lon, lat = snap(lon, lat)
-    done = conn.execute(
-        "UPDATE sensors SET key = ?, name = ?, lon = ?, lat = ?, ip = ?, created_at = ?, ip_seen_at = ?,"
-        " last_seen = NULL, misses = 0, state = NULL, state_at = NULL, reported_at = NULL,"
-        " quiet = 0, confirmed = 0, last_ping = NULL, asn = ? WHERE token_hash = ? AND mode = 'ping'",
-        (street["key"], street["name"], lon, lat, ip, now_ms, now_ms, asn, token_hash(token)),
-    )
-    return done.rowcount > 0
-
-
 def check(conn, token: str, ip: str, now_ms: int, cellular: bool = False):
     """Человек с токеном открыл карту. Подтверждает IP, если он тот же через сутки после подключения.
 
