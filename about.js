@@ -164,17 +164,13 @@ function showSensor(result) {
   const out = document.querySelector("#sensor-result");
   const where = `${result.name}, дом ${result.house}${result.exact ? "" : " (ближайший найденный в базе)"}`;
   const parts = [block("p", `Подключено: ${where}. Красит кусок улицы около ${result.radius} м.`)];
-  if (result.mode === "pulse") {
-    const url = new URL(`api/pulse/${result.token}`, location.href).href;
-    parts.push(
-      block("p", "Пусть на роутере, Raspberry Pi или любом компьютере, который всегда в розетке, раз в минуту выполняется эта команда (cron):"),
-      block("pre", `* * * * * curl -fsS -m 10 ${url} >/dev/null 2>&1`),
-      block("p", "Проверить вручную: откройте ссылку или выполните curl, придёт {\"ok\": true}. Датчик заработает после первого пульса, «нет» поставит после 4 минут тишины."),
-      block("pre", url)
-    );
-  } else {
-    parts.push(block("p", "Роутер отвечает, проверяем его раз в минуту. «Нет» ставится после трёх пропущенных проверок подряд."));
-  }
+  const url = new URL(`api/pulse/${result.token}`, location.href).href;
+  parts.push(
+    block("p", "Пусть на роутере, Raspberry Pi или любом компьютере, который всегда в розетке, раз в минуту выполняется эта команда (cron):"),
+    block("pre", `* * * * * curl -fsS -m 10 ${url} >/dev/null 2>&1`),
+    block("p", "Проверить вручную: откройте ссылку или выполните curl, придёт {\"ok\": true}. Датчик заработает после первого пульса, «нет» поставит после 4 минут тишины."),
+    block("pre", url)
+  );
   parts.push(
     block("p", "Токен нужен, чтобы отключить датчик. Сохраните его, потом показать не сможем:"),
     block("pre", result.token)
@@ -185,19 +181,18 @@ function showSensor(result) {
 async function addSensor() {
   const out = document.querySelector("#sensor-result");
   const address = document.querySelector("#sensor-address").value.trim();
-  const mode = document.querySelector("input[name=sensor-mode]:checked").value;
   if (!address) {
     out.textContent = "Напиши улицу и номер дома, например «Артёма 10».";
     return;
   }
   const button = document.querySelector("#sensor-add");
   button.disabled = true;
-  out.textContent = mode === "ping" ? "Проверяю, отвечает ли роутер…" : "Подключаю…";
+  out.textContent = "Подключаю…";
   try {
     const response = await fetch("api/sensor", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ address, mode }),
+      body: JSON.stringify({ address }),
     });
     const result = await response.json();
     if (!result.ok) {

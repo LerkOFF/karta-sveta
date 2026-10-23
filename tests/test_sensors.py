@@ -90,8 +90,8 @@ class DeriveTest(unittest.TestCase):
 
     def test_ping_needs_several_misses(self):
         self.assertEqual(sensors.derive(sensor("ping", misses=0), NOW), "on")
-        self.assertIsNone(sensors.derive(sensor("ping", misses=2), NOW))
-        self.assertEqual(sensors.derive(sensor("ping", misses=3), NOW), "off")
+        self.assertIsNone(sensors.derive(sensor("ping", misses=1), NOW))
+        self.assertEqual(sensors.derive(sensor("ping", misses=2), NOW), "off")
 
 
 class PlanTest(unittest.TestCase):
@@ -162,13 +162,12 @@ class DatabaseTest(unittest.TestCase):
             token = sensors.create(conn, "ping", STREET, 37.8, 48.0, "o", NOW, ip="8.8.8.8", alive=True)
             sensor_id = sensors.by_token(conn, token)["id"]
             self.assertEqual(list(sensors.tick(conn, NOW, SALT).values()), ["on"])
-            for minute in (1, 2):
-                sensors.record_ping(conn, sensor_id, False, NOW + minute * MIN_MS)
-                self.assertEqual(sensors.tick(conn, NOW + minute * MIN_MS, SALT), {})
-            sensors.record_ping(conn, sensor_id, False, NOW + 3 * MIN_MS)
-            self.assertEqual(list(sensors.tick(conn, NOW + 3 * MIN_MS, SALT).values()), ["off"])
-            sensors.record_ping(conn, sensor_id, True, NOW + 4 * MIN_MS)
-            self.assertEqual(list(sensors.tick(conn, NOW + 4 * MIN_MS, SALT).values()), ["on"])
+            sensors.record_ping(conn, sensor_id, False, NOW + 5 * MIN_MS)
+            self.assertEqual(sensors.tick(conn, NOW + 5 * MIN_MS, SALT), {})
+            sensors.record_ping(conn, sensor_id, False, NOW + 10 * MIN_MS)
+            self.assertEqual(list(sensors.tick(conn, NOW + 10 * MIN_MS, SALT).values()), ["off"])
+            sensors.record_ping(conn, sensor_id, True, NOW + 15 * MIN_MS)
+            self.assertEqual(list(sensors.tick(conn, NOW + 15 * MIN_MS, SALT).values()), ["on"])
 
     def test_hold_writes_no_off(self):
         with store.connect() as conn:
@@ -195,6 +194,49 @@ class DatabaseTest(unittest.TestCase):
             self.assertFalse(sensors.remove(conn, token))
             self.assertFalse(sensors.ip_taken(conn, "8.8.8.8"))
             self.assertEqual(len(self.marks(conn)), 1)
+
+    def test_watch_sensor_is_silent_until_ip_is_confirmed(self):
+        with store.connect() as conn:
+            token = sensors.create(conn, "ping", STREET, 37.8, 48.0, "o", NOW, ip="8.8.8.8", confirmed=False)
+            sensor_id = sensors.by_token(conn, token)["id"]
+            self.assertEqual(sensors.due_pings(conn, NOW + 10 * MIN_MS), [])
+            self.assertEqual(sensors.tick(conn, NOW + 10 * MIN_MS, SALT), {})
+            self.assertEqual(store.sensor_counts(conn), {"on": 0, "off": 0})
+            soon = sensors.check(conn, token, "8.8.8.8", NOW + 60 * MIN_MS)
+            self.assertEqual((soon["state"], soon["same_ip"]), ("probation", True))
+            elsewhere = sensors.check(conn, token, "5.5.5.5", NOW + sensors.CONFIRM_MS + MIN_MS)
+            self.assertEqual((elsewhere["state"], elsewhere["same_ip"]), ("probation", False))
+            late = sensors.check(conn, token, "8.8.8.8", NOW + sensors.CONFIRM_MS + MIN_MS)
+            self.assertEqual(late["state"], "active")
+            self.assertEqual([row["id"] for row in sensors.due_pings(conn, NOW + sensors.CONFIRM_MS + MIN_MS)], [sensor_id])
+            sensors.record_ping(conn, sensor_id, True, NOW + sensors.CONFIRM_MS + MIN_MS)
+            self.assertEqual(
+                list(sensors.tick(conn, NOW + sensors.CONFIRM_MS + MIN_MS, SALT).values()), ["on"]
+            )
+
+    def test_pings_are_spaced_by_five_minutes(self):
+        with store.connect() as conn:
+            token = sensors.create(conn, "ping", STREET, 37.8, 48.0, "o", NOW, ip="8.8.8.8", alive=True)
+            sensor_id = sensors.by_token(conn, token)["id"]
+            self.assertEqual(len(sensors.due_pings(conn, NOW)), 1)
+            sensors.record_ping(conn, sensor_id, True, NOW)
+            self.assertEqual(sensors.due_pings(conn, NOW + 2 * MIN_MS), [])
+            self.assertEqual(len(sensors.due_pings(conn, NOW + 5 * MIN_MS)), 1)
+
+    def test_reenroll_restarts_probation_and_keeps_token(self):
+        with store.connect() as conn:
+            token = sensors.create(conn, "ping", STREET, 37.8, 48.0, "o", NOW, ip="8.8.8.8", alive=True)
+            other = {"key": "кирова", "name": "Кирова"}
+            self.assertTrue(sensors.reenroll(conn, token, other, 37.7, 48.1, "1.1.1.1", NOW + MIN_MS))
+            row = sensors.by_token(conn, token)
+            self.assertEqual((row["key"], row["ip"], row["confirmed"], row["state"]), ("кирова", "1.1.1.1", 0, None))
+            self.assertFalse(sensors.reenroll(conn, "нет такого", other, 37.7, 48.1, "1.1.1.1", NOW))
+
+    def test_check_unknown_or_pulse_token(self):
+        with store.connect() as conn:
+            pulse = sensors.create(conn, "pulse", STREET, 37.8, 48.0, "o", NOW)
+            self.assertEqual(sensors.check(conn, pulse, "8.8.8.8", NOW)["state"], "gone")
+            self.assertEqual(sensors.check(conn, "нет", "8.8.8.8", NOW)["state"], "gone")
 
     def test_sensor_marks_appear_in_live_places(self):
         import time

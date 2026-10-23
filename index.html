@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" sizes="120x120" href="/favicon-120.png">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="stylesheet" href="vendor/maplibre/maplibre-gl.css">
-  <link rel="stylesheet" href="styles.css?v=12">
+  <link rel="stylesheet" href="styles.css?v=13">
   <script>
     (function(m,e,t,r,i,k,a){m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};
     m[i].l=1*new Date();
@@ -47,6 +47,11 @@
         <button id="off" type="button" class="btn off" disabled>Света нет</button>
       </div>
       <p id="mark-note" class="note"></p>
+      <div id="watch" class="watch" hidden>
+        <p id="watch-text" class="watch-text"></p>
+        <button id="watch-btn" type="button" class="btn ghost" hidden>Следить за этим местом</button>
+        <button id="watch-off" type="button" class="btn ghost" hidden>Отключить датчик</button>
+      </div>
     </section>
     <p id="bulletin" class="bulletin" hidden></p>
     <div class="legend legend-overlay">
@@ -76,6 +81,6 @@
     <p class="foot"><a href="about.html">О карте и источниках</a>. Линии улиц © участники OpenStreetMap.</p>
   </aside>
   <script src="vendor/maplibre/maplibre-gl.js"></script>
-  <script src="app.js?v=22"></script>
+  <script src="app.js?v=23"></script>
 </body>
 </html>

@@ -1,7 +1,9 @@
 """Датчики-«пульс»: устройство жителя, по которому видно, есть ли у него дома свет.
 
 Два режима:
-- ping: сервер сам пингует внешний IP роутера (нужен белый статический адрес);
+- ping: человек нажимает на карте «Свет есть» и «Следить за этим местом»; сервер запоминает
+  его белый IP и раз в 5 минут пингует. Сутки датчик на испытании: пока тот же человек не
+  зашёл с тем же IP через сутки, адрес не считается статическим и датчик молчит;
 - pulse: устройство раз в минуту дёргает /api/pulse/<токен>, адрес не нужен.
 
 Датчик пишет обычные отметки kind="sensor" по куску улицы, дальше их считает model.py.
@@ -28,8 +30,13 @@ CELL = (0.001, 0.0007)
 # Пульс раз в минуту; тишина дольше этого времени считается «света нет».
 PULSE_LOST_MS = 4 * MIN_MS
 
-# Столько проверок ping подряд без ответа считаются «света нет».
-PING_MISS_LIMIT = 3
+# Как часто пингуем и сколько проверок подряд без ответа считаются «света нет» (10 минут).
+PING_EVERY_MS = 5 * MIN_MS
+PING_MISS_LIMIT = 2
+
+# Испытание ping-датчика: IP считается статическим, если тот же человек (по токену в браузере)
+# пришёл с тем же IP не раньше чем через столько после подключения.
+CONFIRM_MS = 24 * 60 * MIN_MS
 
 # Пока состояние не меняется, отметку повторяем: уверенность в ней падает вдвое за 90 минут и 4 часа.
 REFRESH_MS = 20 * MIN_MS
@@ -172,6 +179,8 @@ def plan(sensor, now_ms: int, hold: bool = False):
 
 def settle(conn, sensor, now_ms: int, salt: str, hold: bool = False):
     """Применяет plan к одному датчику: пишет отметку и обновляет его состояние."""
+    if not sensor["confirmed"]:
+        return None
     if sensor["state"] == "off" and not sensor["quiet"] and now_ms - (sensor["state_at"] or now_ms) > GIVE_UP_MS:
         conn.execute("UPDATE sensors SET quiet = 1 WHERE id = ?", (sensor["id"],))
         sensor["quiet"] = 1
@@ -214,16 +223,58 @@ def ip_taken(conn, ip: str) -> bool:
     return conn.execute("SELECT 1 FROM sensors WHERE ip = ?", (ip,)).fetchone() is not None
 
 
-def create(conn, mode: str, street, lon: float, lat: float, owner: str, now_ms: int, ip=None, alive: bool = False):
-    """Заводит датчик и возвращает токен (в базе только его хеш). alive: ответ уже получен."""
+def create(
+    conn, mode: str, street, lon: float, lat: float, owner: str, now_ms: int, ip=None, alive: bool = False, confirmed: bool = True
+):
+    """Заводит датчик и возвращает токен (в базе только его хеш). alive: ответ уже получен.
+
+    confirmed=False: датчик на испытании, ничего не пишет, пока check не подтвердит IP.
+    """
     token = new_token()
     lon, lat = snap(lon, lat)
     conn.execute(
-        "INSERT INTO sensors (token_hash, mode, key, name, lon, lat, radius, ip, owner, created_at, last_seen)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (token_hash(token), mode, street["key"], street["name"], lon, lat, RADIUS, ip, owner, now_ms, now_ms if alive else None),
+        "INSERT INTO sensors (token_hash, mode, key, name, lon, lat, radius, ip, owner, created_at, last_seen,"
+        " confirmed, ip_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            token_hash(token), mode, street["key"], street["name"], lon, lat, RADIUS, ip, owner, now_ms,
+            now_ms if alive else None, 1 if confirmed else 0, now_ms if ip else None,
+        ),
     )
     return token
+
+
+def reenroll(conn, token: str, street, lon: float, lat: float, ip: str, now_ms: int) -> bool:
+    """Тот же человек (токен) подключает ping-датчик заново: другое место или другой IP, снова испытание."""
+    lon, lat = snap(lon, lat)
+    done = conn.execute(
+        "UPDATE sensors SET key = ?, name = ?, lon = ?, lat = ?, ip = ?, created_at = ?, ip_seen_at = ?,"
+        " last_seen = NULL, misses = 0, state = NULL, state_at = NULL, reported_at = NULL,"
+        " quiet = 0, confirmed = 0, last_ping = NULL WHERE token_hash = ? AND mode = 'ping'",
+        (street["key"], street["name"], lon, lat, ip, now_ms, now_ms, token_hash(token)),
+    )
+    return done.rowcount > 0
+
+
+def check(conn, token: str, ip: str, now_ms: int):
+    """Человек с токеном открыл карту. Подтверждает IP, если он тот же через сутки после подключения.
+
+    Возвращает {"state": "gone"} или {"state": "probation" | "active", "sensor": "on" | "off" | None,
+    "ready_at": когда можно ждать включения}. Другой IP не вредит: человек мог зайти с мобильного.
+    """
+    sensor = by_token(conn, token)
+    if not sensor or sensor["mode"] != "ping":
+        return {"state": "gone"}
+    if sensor["ip"] and ip == sensor["ip"]:
+        conn.execute("UPDATE sensors SET ip_seen_at = ? WHERE id = ?", (now_ms, sensor["id"]))
+        if not sensor["confirmed"] and now_ms - sensor["created_at"] >= CONFIRM_MS:
+            conn.execute("UPDATE sensors SET confirmed = 1, last_ping = NULL WHERE id = ?", (sensor["id"],))
+            sensor["confirmed"] = 1
+    return {
+        "state": "active" if sensor["confirmed"] else "probation",
+        "sensor": sensor["state"],
+        "ready_at": sensor["created_at"] + CONFIRM_MS,
+        "same_ip": bool(sensor["ip"] and ip == sensor["ip"]),
+    }
 
 
 def beat(conn, token: str, now_ms: int, salt: str):
@@ -238,11 +289,21 @@ def beat(conn, token: str, now_ms: int, salt: str):
     return {"state": sensor["state"]}
 
 
+def due_pings(conn, now_ms: int):
+    """Подтверждённые ping-датчики, которых пора проверить: [{id, ip}, ...]."""
+    rows = conn.execute(
+        "SELECT id, ip FROM sensors WHERE mode = 'ping' AND confirmed = 1 AND ip IS NOT NULL"
+        " AND (last_ping IS NULL OR last_ping <= ?)",
+        (now_ms - PING_EVERY_MS + 5000,),
+    )
+    return [dict(row) for row in rows]
+
+
 def record_ping(conn, sensor_id: int, ok: bool, now_ms: int):
     if ok:
-        conn.execute("UPDATE sensors SET last_seen = ?, misses = 0 WHERE id = ?", (now_ms, sensor_id))
+        conn.execute("UPDATE sensors SET last_seen = ?, misses = 0, last_ping = ? WHERE id = ?", (now_ms, now_ms, sensor_id))
     else:
-        conn.execute("UPDATE sensors SET misses = misses + 1 WHERE id = ?", (sensor_id,))
+        conn.execute("UPDATE sensors SET misses = misses + 1, last_ping = ? WHERE id = ?", (now_ms, sensor_id))
 
 
 def tick(conn, now_ms: int, salt: str, hold: bool = False):

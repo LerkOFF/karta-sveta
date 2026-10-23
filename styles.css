@@ -361,6 +361,13 @@ body.page { display: block; height: auto; }
 
 .card .close { display: none; }
 
+/* Датчик «следить за этим местом» в карточке */
+.watch { margin-top: 8px; }
+.watch[hidden] { display: none; }
+.watch-text { margin: 0 0 8px; color: var(--muted); font: 13px/1.4 ui-sans-serif, system-ui, sans-serif; }
+.watch .btn { margin-top: 0; min-height: 40px; }
+.watch .btn[hidden] { display: none; }
+
 /* Телефон: карта почти на весь экран. Пока улица не выбрана, сверху только поиск,
    после выбора карточка уходит вниз листом и не закрывает то, что нажали. */
 @media (max-width: 800px) {
@@ -371,6 +378,7 @@ body.page { display: block; height: auto; }
   .card .chips,
   .card .houses,
   .card .actions,
+  .card .watch,
   .card .note { display: none; }
   .search .btn { min-height: 40px; }
   .search input { min-height: 40px; }
@@ -387,6 +395,7 @@ body.page { display: block; height: auto; }
   #map.picking .card .chips,
   #map.picking .card .houses { display: flex; }
   #map.picking .card .actions { display: flex; }
+  #map.picking .card .watch:not([hidden]) { display: block; }
   #map.picking .card .note { display: block; height: auto; min-height: 1.4em; max-height: 4.2em; font-size: 13px; }
   #map.picking .card .search { display: none; }
   #map.picking .card .close {

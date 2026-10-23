@@ -247,6 +247,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/sensor/delete":
             self.sensor_delete(payload)
             return
+        if path == "/api/watch":
+            self.watch(payload)
+            return
+        if path == "/api/watch/check":
+            self.watch_check(payload)
+            return
         if path not in ("/api/comments", "/api/mark"):
             self.send_error(404)
             return
@@ -299,17 +305,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json({"ok": True, **state})
 
     def sensor_register(self, payload):
-        """Новый датчик: {"address": "Артёма 10", "mode": "pulse" | "ping"}.
-
-        В режиме ping пингуется IP, с которого пришёл запрос: чужой адрес так не подключить.
-        """
+        """Датчик-пульс: {"address": "Артёма 10"}. Ответ с токеном, ссылку для устройства собирает страница."""
         ip = self.client_ip()
         if not rate_ok("sensor:" + ip, 10, 60 * 60):
             self.send_json({"ok": False, "reason": "слишком часто, попробуй позже"}, 429)
-            return
-        mode = payload.get("mode")
-        if mode not in ("pulse", "ping"):
-            self.send_json({"ok": False, "reason": "выбери способ проверки"})
             return
         address = str(payload.get("address") or "")[:120]
         found = streets_in(address)
@@ -329,42 +328,15 @@ class Handler(BaseHTTPRequestHandler):
             return
         owner = store.reporter_id(SECRET["salt"], "owner", ip)
         now = int(time.time() * 1000)
-        public_ip = None
-        if mode == "ping":
-            public_ip = sensors.global_ipv4(ip)
-            if not public_ip:
-                self.send_json(
-                    {
-                        "ok": False,
-                        "reason": "Для проверки пингом открой страницу из домашней сети по IPv4 с белым адресом. С мобильного интернета и за общим адресом провайдера это не работает, выбери пульс.",
-                    }
-                )
-                return
         with store.connect() as conn:
             if sensors.owner_count(conn, owner) >= sensors.MAX_PER_OWNER:
                 self.send_json({"ok": False, "reason": f"С одного адреса можно подключить не больше {sensors.MAX_PER_OWNER} датчиков."})
                 return
-            if public_ip and sensors.ip_taken(conn, public_ip):
-                self.send_json({"ok": False, "reason": "Этот адрес уже подключён."})
-                return
-        if public_ip and not sensors.ping(public_ip, count=3):
-            self.send_json(
-                {
-                    "ok": False,
-                    "reason": "Роутер не отвечает на ping снаружи. Включи ответ на ping из интернета (WAN) в его настройках или выбери пульс.",
-                }
-            )
-            return
-        with store.connect() as conn:
-            token = sensors.create(
-                conn, mode, street, house["lon"], house["lat"], owner, now, ip=public_ip, alive=bool(public_ip)
-            )
-            sensor = sensors.by_token(conn, token)
-            sensors.settle(conn, sensor, now, SECRET["salt"])
+            token = sensors.create(conn, "pulse", street, house["lon"], house["lat"], owner, now)
         self.send_json(
             {
                 "ok": True,
-                "mode": mode,
+                "mode": "pulse",
                 "token": token,
                 "name": street["name"],
                 "house": house["label"],
@@ -372,6 +344,74 @@ class Handler(BaseHTTPRequestHandler):
                 "radius": sensors.RADIUS,
             }
         )
+
+    def watch(self, payload):
+        """Кнопка «Следить за этим местом» после отметки «Свет есть»: {"key", "lon", "lat", "token"?}.
+
+        Сервер запоминает белый IPv4, с которого пришёл человек, и после испытания (сутки) пингует его.
+        Повторное нажатие с прежним токеном переносит датчик на новое место или новый IP.
+        """
+        ip = self.client_ip()
+        if not rate_ok("watch:" + ip, 10, 60 * 60):
+            self.send_json({"ok": False, "reason": "слишком часто, попробуй позже"}, 429)
+            return
+        key = str(payload.get("key") or "")
+        lon, lat = payload.get("lon"), payload.get("lat")
+        if key not in STREET_BY_KEY or not valid_point(lon, lat):
+            self.send_json({"ok": False, "reason": "сначала выберите на карте место на улице"})
+            return
+        public_ip = sensors.global_ipv4(ip)
+        if not public_ip:
+            self.send_json(
+                {
+                    "ok": False,
+                    "reason": "Не вышло: нужен белый IPv4. Откройте карту из домашнего Wi-Fi, не с мобильного интернета и не через VPN.",
+                }
+            )
+            return
+        token = str(payload.get("token") or "")
+        street = {"key": key, "name": STREET_BY_KEY[key]}
+        now = int(time.time() * 1000)
+        with store.connect() as conn:
+            mine = sensors.by_token(conn, token) if token else None
+            if mine and mine["mode"] != "ping":
+                mine = None
+            if not mine and sensors.ip_taken(conn, public_ip):
+                self.send_json({"ok": False, "reason": "С этого адреса датчик уже подключён. Отключить его можно на странице «О карте»."})
+                return
+        if not sensors.ping(public_ip, count=3):
+            self.send_json(
+                {"ok": False, "reason": "Роутер не отвечает на ping снаружи. Включите ответ на ping из интернета (WAN) в его настройках."}
+            )
+            return
+        owner = store.reporter_id(SECRET["salt"], "owner", ip)
+        with store.connect() as conn:
+            if mine and sensors.reenroll(conn, token, street, float(lon), float(lat), public_ip, now):
+                result_token = token
+            else:
+                result_token = sensors.create(
+                    conn, "ping", street, float(lon), float(lat), owner, now, ip=public_ip, confirmed=False
+                )
+        self.send_json(
+            {
+                "ok": True,
+                "token": result_token,
+                "state": "probation",
+                "ready_at": now + sensors.CONFIRM_MS,
+                "radius": sensors.RADIUS,
+            }
+        )
+
+    def watch_check(self, payload):
+        """Человек с токеном открыл карту: подтверждает IP и отдаёт состояние его датчика."""
+        ip = self.client_ip()
+        if not rate_ok("check:" + ip, 120, 60 * 60):
+            self.send_json({"ok": False, "reason": "слишком часто"}, 429)
+            return
+        now = int(time.time() * 1000)
+        with store.connect() as conn:
+            result = sensors.check(conn, str(payload.get("token") or ""), ip, now)
+        self.send_json({"ok": result["state"] != "gone", **result})
 
     def sensor_delete(self, payload):
         """Удаляет датчик по токену вместе с IP."""

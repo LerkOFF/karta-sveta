@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Фоновая служба датчиков: раз в минуту пингует роутеры, решает, у кого пропал или вернулся свет.
+"""Фоновая служба датчиков: раз в минуту делает круг, роутеры из подтверждённых пингует раз в 5 минут и решает, у кого пропал или вернулся свет.
 
 Запуск на сервере рядом со страницей: python3 scripts/pinger.py  (unit: deploy/karta-pinger.service).
 База та же, что у server.py (data/karta.db, переменная KARTA_DB). Проверка одного круга: --once.
@@ -50,7 +50,7 @@ def cycle(salt: str, since: dict) -> dict:
     hold = not (server_ok and net_ok and settled)
 
     with store.connect() as conn:
-        pinged = [dict(row) for row in conn.execute("SELECT id, ip FROM sensors WHERE mode = 'ping' AND ip IS NOT NULL")]
+        pinged = sensors.due_pings(conn, now)
     results = {}
     if net_ok and pinged:
         with ThreadPoolExecutor(max_workers=32) as pool:

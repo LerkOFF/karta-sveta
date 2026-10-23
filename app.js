@@ -32,6 +32,13 @@ const toInput = document.querySelector("#h-to");
 const housesBtn = document.querySelector("#h-go");
 const groupsEl = document.querySelector("#groups");
 const phonesEl = document.querySelector("#phones");
+const watchEl = document.querySelector("#watch");
+const watchText = document.querySelector("#watch-text");
+const watchBtn = document.querySelector("#watch-btn");
+const watchOffBtn = document.querySelector("#watch-off");
+
+// Тот же ключ, что на странице «О карте»: там датчик можно отключить по токену.
+const TOKEN_KEY = "karta-sensor-token";
 
 const map = new maplibregl.Map({
   container: "map",
@@ -49,6 +56,10 @@ let pick = null;
 let scope = DEFAULT_SCOPE;
 let focusKey = null;
 let flash = "";
+// Датчик «следить за этим местом»: предложение после «Свет есть», ответ сервера о моём датчике, сообщение.
+let watchOffer = false;
+let watchInfo = null;
+let watchMsg = "";
 // Выбор по номерам домов: {label, count}. Пока он есть, scope это радиус, посчитанный по домам.
 let houses = null;
 const houseCache = new Map();
@@ -415,7 +426,115 @@ function scopeText() {
   return scope >= 500 ? "отрезок около 1 км" : `отрезок около ${scope * 2} м`;
 }
 
+function savedToken() {
+  try {
+    return localStorage.getItem(TOKEN_KEY) || "";
+  } catch (error) {
+    return "";
+  }
+}
+
+function saveToken(token) {
+  try {
+    localStorage.setItem(TOKEN_KEY, token);
+  } catch (error) {
+    /* без хранилища датчик останется, но отключить его можно будет только с токеном */
+  }
+}
+
+function watchStatus() {
+  const info = watchInfo;
+  if (info.state === "probation") {
+    const when = new Date(info.ready_at).toLocaleString("ru", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" });
+    return info.ready_at > Date.now() + clockShift
+      ? `Датчик подключён, идёт проверка адреса. Откройте карту из дома не раньше ${when}: если IP тот же, датчик заработает.`
+      : "Датчик ждёт подтверждения адреса: откройте карту из дома, с домашнего Wi-Fi.";
+  }
+  if (info.sensor === "on") return "Датчик работает: у вас сейчас свет есть.";
+  if (info.sensor === "off") return "Датчик работает: у вас сейчас света нет.";
+  return "Датчик работает, ждём первой проверки.";
+}
+
+function renderWatch() {
+  const offer = watchOffer && !!pick;
+  const mine = !!(watchInfo && watchInfo.ok);
+  watchEl.hidden = !(offer || mine || watchMsg);
+  const parts = [];
+  if (watchMsg) parts.push(watchMsg);
+  else if (mine) parts.push(watchStatus());
+  if (offer && !watchMsg) {
+    parts.push("Дома белый статический IP? Карта будет сама пинговать ваш роутер раз в 5 минут и отмечать, есть ли свет. Нажимайте дома, из домашнего Wi-Fi.");
+  }
+  watchText.textContent = parts.join(" ");
+  watchBtn.hidden = !offer;
+  watchBtn.textContent = mine ? "Перенести датчик сюда" : "Следить за этим местом";
+  watchOffBtn.hidden = !mine;
+}
+
+async function refreshWatch() {
+  const token = savedToken();
+  if (!token) {
+    watchInfo = null;
+    renderWatch();
+    return;
+  }
+  const response = await fetch("api/watch/check", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
+  });
+  const result = await response.json();
+  if (result.state === "gone") saveToken("");
+  watchInfo = result.ok ? result : null;
+  renderWatch();
+}
+
+async function watchHere() {
+  if (!pick) return;
+  watchBtn.disabled = true;
+  try {
+    const response = await fetch("api/watch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: pick.key, lon: pick.lon, lat: pick.lat, token: savedToken() }),
+    });
+    const result = await response.json();
+    if (!result.ok) {
+      watchMsg = result.reason || "Датчик не подключился.";
+    } else {
+      saveToken(result.token);
+      watchOffer = false;
+      watchMsg = "Принято. Через сутки откройте карту из дома: если IP не изменился, датчик включится.";
+      await refreshWatch();
+      return;
+    }
+  } catch (error) {
+    watchMsg = "Сервер не ответил.";
+  } finally {
+    watchBtn.disabled = false;
+    renderWatch();
+  }
+}
+
+async function watchOff() {
+  const response = await fetch("api/sensor/delete", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token: savedToken() }),
+  });
+  const result = await response.json();
+  if (result.ok) {
+    saveToken("");
+    watchInfo = null;
+    watchMsg = "Датчик отключён, IP удалён.";
+  } else {
+    watchMsg = result.reason || "Не получилось отключить.";
+  }
+  renderWatch();
+}
+
 function renderCard() {
+  renderWatch();
   chipsEl.querySelectorAll("button").forEach((button) => {
     button.classList.toggle("on", !houses && Number(button.dataset.r) === scope);
   });
@@ -488,6 +607,8 @@ function clearHouses() {
 
 function setPick(next) {
   pick = next;
+  watchOffer = false;
+  watchMsg = "";
   focusKey = null;
   flash = "";
   clearHouses();
@@ -697,6 +818,8 @@ function mark(status) {
         const word = status === "on" ? "свет есть" : "света нет";
         const fresh = result.streets.some((item) => item.new);
         flash = fresh ? `Спасибо: ${where}, ${word}. Видно всем.` : `${where}, ${word}: такая отметка уже учтена.`;
+        watchOffer = status === "on";
+        watchMsg = "";
       }
       renderCard();
       await pullLive();
@@ -1101,6 +1224,15 @@ async function boot() {
 }
 
 queryInput.addEventListener("input", () => search(queryInput.value));
+watchBtn.addEventListener("click", () => {
+  watchHere().catch(() => {});
+});
+watchOffBtn.addEventListener("click", () => {
+  watchOff().catch(() => {
+    watchMsg = "Сервер не ответил.";
+    renderWatch();
+  });
+});
 onBtn.addEventListener("click", () => mark("on"));
 offBtn.addEventListener("click", () => mark("off"));
 chipsEl.addEventListener("click", (event) => {
@@ -1139,6 +1271,11 @@ hereBtn.addEventListener("click", () => {
     { enableHighAccuracy: true, timeout: 8000 }
   );
 });
+
+refreshWatch().catch(() => {});
+setInterval(() => {
+  refreshWatch().catch(() => {});
+}, 5 * 60 * 1000);
 
 boot().catch(() => {
   markNote.textContent = "Данные не загрузились. Обновите страницу.";

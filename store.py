@@ -70,7 +70,10 @@ CREATE TABLE IF NOT EXISTS sensors (
     state TEXT CHECK (state IN ('on', 'off')),
     state_at INTEGER,
     reported_at INTEGER,
-    quiet INTEGER NOT NULL DEFAULT 0
+    quiet INTEGER NOT NULL DEFAULT 0,
+    confirmed INTEGER NOT NULL DEFAULT 1,
+    ip_seen_at INTEGER,
+    last_ping INTEGER
 );
 CREATE INDEX IF NOT EXISTS sensors_owner ON sensors (owner);
 """
@@ -113,6 +116,14 @@ def init():
         for column, kind in (("lon", "REAL"), ("lat", "REAL"), ("radius", "INTEGER")):
             if column not in have:
                 conn.execute(f"ALTER TABLE reports ADD COLUMN {column} {kind}")
+        have = {row["name"] for row in conn.execute("PRAGMA table_info(sensors)")}
+        for column, kind in (
+            ("confirmed", "INTEGER NOT NULL DEFAULT 1"),
+            ("ip_seen_at", "INTEGER"),
+            ("last_ping", "INTEGER"),
+        ):
+            if column not in have:
+                conn.execute(f"ALTER TABLE sensors ADD COLUMN {column} {kind}")
     migrate_old()
 
 
@@ -229,6 +240,6 @@ def live(conn, now_ms=None):
 def sensor_counts(conn):
     """Сколько датчиков сейчас видят свет и сколько нет. Адресов и IP здесь нет."""
     counts = {"on": 0, "off": 0}
-    for row in conn.execute("SELECT state, COUNT(*) AS n FROM sensors WHERE state IS NOT NULL AND quiet = 0 GROUP BY state"):
+    for row in conn.execute("SELECT state, COUNT(*) AS n FROM sensors WHERE state IS NOT NULL AND quiet = 0 AND confirmed = 1 GROUP BY state"):
         counts[row["state"]] = row["n"]
     return counts
