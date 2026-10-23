@@ -37,6 +37,7 @@ PUBLIC_FILES = {
     "/data/kyiv-queues.json": "data/kyiv-queues.json",
     "/data/sources.json": "data/sources.json",
     "/data/contacts.json": "data/contacts.json",
+    "/data/houses.json": "data/houses.json",
     "/about": "about.html",
     "/about.html": "about.html",
     "/about.js": "about.js",
@@ -47,7 +48,7 @@ PUBLIC_FILES = {
     "/robots.txt": "robots.txt",
     "/sitemap.xml": "sitemap.xml",
 }
-LONG_CACHE = ("/vendor/", "/data/streets")
+LONG_CACHE = ("/vendor/", "/data/streets", "/data/houses")
 
 mimetypes.add_type("application/geo+json", ".geojson")
 mimetypes.add_type("text/javascript", ".js")
@@ -463,13 +464,14 @@ class Handler(BaseHTTPRequestHandler):
     def ingest(self, payload):
         """Для читалок чатов и датчиков. Нужен заголовок X-Ingest-Token.
 
-        Тело: {"text", "source", "sender", "ts", "ext_id"}; для датчика вместо text
+        Тело: {"text", "source", "sender", "ts", "ext_id", "kind"}; kind "official" для точных данных
+        с сайтов и ведомств (рисуются сплошной линией); для датчика вместо text
         можно прислать {"kind": "sensor", "key", "status", "sender"}.
         """
         if not check_token(self):
             self.send_json({"ok": False, "reason": "нет доступа"}, 403)
             return
-        kind = payload.get("kind") if payload.get("kind") in ("chat", "bot", "sensor", "channel") else "chat"
+        kind = payload.get("kind") if payload.get("kind") in ("chat", "bot", "sensor", "channel", "official") else "chat"
         source = str(payload.get("source") or "чат")
         sender = str(payload.get("sender") or source)
         who = store.reporter_id(SECRET["salt"], kind, source, sender)

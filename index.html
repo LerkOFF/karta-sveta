@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" sizes="120x120" href="/favicon-120.png">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="stylesheet" href="vendor/maplibre/maplibre-gl.css">
-  <link rel="stylesheet" href="styles.css?v=13">
+  <link rel="stylesheet" href="styles.css?v=16">
   <script>
     (function(m,e,t,r,i,k,a){m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};
     m[i].l=1*new Date();
@@ -30,6 +30,7 @@
       </div>
       <p id="picked" class="picked">Нажмите на карте на улицу, где хотите отметить свет.</p>
       <div id="scopes" class="chips" role="group" aria-label="Длина участка">
+        <button type="button" data-r="40">Дом</button>
         <button type="button" data-r="100" class="on">200 м</button>
         <button type="button" data-r="200">400 м</button>
         <button type="button" data-r="500">1 км</button>
@@ -57,9 +58,11 @@
     <div class="legend legend-overlay">
       <span><i class="swatch on"></i>есть</span>
       <span><i class="swatch off"></i>нет</span>
-      <span><i class="swatch fade"></i>блёклый: давно не подтверждали</span>
+      <span><i class="swatch solid"></i>сплошная: точные данные</span>
+      <span><i class="swatch dash"></i>пунктир: жители и чаты</span>
+      <span><i class="swatch fade"></i>блёклый: давно</span>
       <span><i class="swatch nbr"></i>штрихи: по соседям</span>
-      <span><i class="swatch base"></i>точки: по сводке или по умолчанию</span>
+      <span><i class="swatch base"></i>точки: по умолчанию</span>
     </div>
   </main>
   <aside>
@@ -81,6 +84,6 @@
     <p class="foot"><a href="about.html">О карте и источниках</a>. Линии улиц © участники OpenStreetMap.</p>
   </aside>
   <script src="vendor/maplibre/maplibre-gl.js"></script>
-  <script src="app.js?v=24"></script>
+  <script src="app.js?v=27"></script>
 </body>
 </html>

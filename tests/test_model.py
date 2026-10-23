@@ -21,6 +21,20 @@ def row(minutes_ago, status="off", reporter="a", kind="chat", key="артема"
     }
 
 
+class ExactTest(unittest.TestCase):
+    def test_only_official_and_sensor_are_exact(self):
+        for kind, exact in (("official", True), ("sensor", True), ("chat", False), ("channel", False), ("button", False), ("comment", False)):
+            self.assertEqual(assess([row(1, kind=kind)], NOW)["exact"], exact, kind)
+
+    def test_newest_report_decides_exactness(self):
+        rows = [row(30, kind="sensor", reporter="s"), row(2, kind="chat", reporter="c")]
+        self.assertFalse(assess(rows, NOW)["exact"])
+
+    def test_places_carry_exactness(self):
+        place = dict(row(1, kind="sensor"), lon=37.8, lat=48.0, radius=100, text="")
+        self.assertTrue(assess_places([place], NOW)[0]["exact"])
+
+
 class AssessTest(unittest.TestCase):
     def test_empty(self):
         self.assertIsNone(assess([], NOW))

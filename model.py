@@ -13,7 +13,11 @@ HALF_LIFE_MIN = {"on": 90, "off": 240}
 
 # Насколько верим источнику.
 # Канал района пересказывает «нам пишут» с задержкой, поэтому доверие ниже.
-TRUST = {"chat": 1.0, "bot": 1.0, "sensor": 1.0, "button": 0.85, "comment": 0.85, "channel": 0.7}
+TRUST = {"chat": 1.0, "bot": 1.0, "sensor": 1.0, "official": 1.0, "button": 0.85, "comment": 0.85, "channel": 0.7}
+
+# Точная информация: ведомство или сайт (official) и датчик. Всё остальное, чат, канал, кнопка,
+# комментарий, это пересказ или слово человека: на карте такая отметка рисуется пунктиром.
+EXACT_KINDS = ("official", "sensor")
 
 # Дольше суток без подтверждения улица считается серой, но запись остаётся в истории.
 HORIZON_MIN = 24 * 60
@@ -97,6 +101,7 @@ def assess(rows, now_ms: int, restored_at=None):
         "conflict": conflict,
         "superseded_at": superseded_at,
         "source": latest["source"],
+        "exact": latest["kind"] in EXACT_KINDS,
     }
 
 

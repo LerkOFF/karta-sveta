@@ -249,7 +249,9 @@ textarea {
 .swatch.off { background: var(--off); }
 .swatch.none { background: #8d867c; }
 .swatch.pick { background: var(--pick); }
-.swatch.nbr { background: repeating-linear-gradient(90deg, #5f584f 0 6px, transparent 6px 9px); }
+.swatch.nbr { background: repeating-linear-gradient(90deg, #5f584f 0 3px, transparent 3px 6px); }
+.swatch.solid { background: #5f584f; }
+.swatch.dash { background: repeating-linear-gradient(90deg, #5f584f 0 7px, transparent 7px 10px); }
 .swatch.base { background: radial-gradient(circle, var(--on) 1.4px, transparent 1.8px) 0 50% / 5px 4px repeat-x; }
 .swatch.fade { background: linear-gradient(90deg, var(--on), var(--off)); opacity: 0.4; }
 
@@ -416,7 +418,8 @@ body.page { display: block; height: auto; }
   #map.picking > .bulletin { display: none; }
 
   .card .btn { min-height: 40px; }
-  .legend-overlay { bottom: 24px; font-size: 11px; line-height: 1.2; }
+  .legend-overlay { bottom: 52px; font-size: 11px; line-height: 1.2; }
+  .legend-overlay span:nth-child(n+6) { display: none; }
   .legend-overlay span { margin-right: 6px; }
   aside { width: auto; overflow: visible; border-left: 0; border-top: 1px solid var(--line); }
   #map > .bulletin { top: auto; right: auto; left: 10px; bottom: 56px; max-width: calc(100% - 20px); }

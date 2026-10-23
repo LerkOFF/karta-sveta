@@ -16,6 +16,11 @@ const CELL = 0.0045;
 // Длина отмечаемого куска улицы вокруг нажатия: радиус в метрах, 0 = вся улица.
 const DEFAULT_SCOPE = 100;
 
+// Область «дом»: круг около 80 м вокруг дома. Дома рисуются точками с приближения HOUSE_ZOOM.
+const HOUSE_SCOPE = 40;
+const HOUSE_ZOOM = 16;
+const HOUSE_MAX = 6000;
+
 const queryInput = document.querySelector("#query");
 const resultsEl = document.querySelector("#results");
 const pickedEl = document.querySelector("#picked");
@@ -73,6 +78,9 @@ let autoByKey = new Map();
 let segInfo = new Map();
 let grid = new Map();
 let neighborBySegment = new Map();
+// Все дома города {ключ улицы: [[номер, lon, lat], ...]}, грузятся при первом приближении.
+let housesAll = null;
+let housesLoading = false;
 
 // Время сервера, чтобы возраст не зависел от часов на телефоне.
 function nowMs() {
@@ -105,12 +113,12 @@ function baselineKind() {
 
 function stateOf(key, segment) {
   const live = liveByKey.get(key) || null;
-  if (live && live.level !== "stale") return { power: live.status, level: live.level, live };
+  if (live && live.level !== "stale") return { power: live.status, level: live.level, live, exact: !!live.exact };
   const plan = autoByKey.get(key);
-  if (plan) return { power: plan, level: "schedule", live };
+  if (plan) return { power: plan, level: "schedule", live, exact: true };
   const near = segment ? neighborBySegment.get(segment) : null;
   if (near) return { power: near.status, level: "neighbor", live, near };
-  if (live && !live.superseded_at) return { power: live.status, level: "stale", live };
+  if (live && !live.superseded_at) return { power: live.status, level: "stale", live, exact: !!live.exact };
   return { power: "on", level: "baseline", live, base: baselineKind() };
 }
 
@@ -130,7 +138,12 @@ function describe(state) {
   const live = state.live;
   if (state.level === "sure" || state.level === "likely") {
     const dispute = live.conflict ? " Ответы расходятся." : "";
-    return `${word(live.status)}, ${ago(live.at)}: ${LEVEL_WORD[state.level]}, ${sourcesWord(live.sources)}.${dispute}${restoredNote(live)} Последняя отметка: «${live.source}».`;
+    const exactness = live.exact ? " Точные данные." : " Со слов жителей или из чата, не точные данные.";
+    return `${word(live.status)}, ${ago(live.at)}: ${LEVEL_WORD[state.level]}, ${sourcesWord(live.sources)}.${dispute}${restoredNote(live)} Последняя отметка: «${live.source}».${exactness}`;
+  }
+  if (state.level === "area") {
+    const area = state.area;
+    return `Этот дом попадает в область отметки на «${area.name}»: ${area.status === "on" ? "свет есть" : "света нет"}, ${ago(area.at)}. Это область вокруг отметки, а не отметка по самому дому.`;
   }
   if (state.level === "schedule") {
     const old = live ? ` Последняя отметка (${word(live.status).toLowerCase()}, ${ago(live.at)}) устарела.${restoredNote(live, false)}` : "";
@@ -396,7 +409,7 @@ function applyState(segment, key) {
   const state = stateOf(key, segment);
   map.setFeatureState(
     { source: "streets", id: segment },
-    { power: state.power, level: state.level, focused: key === focusKey }
+    { power: state.power, level: state.level, exact: !!state.exact, focused: key === focusKey }
   );
 }
 
@@ -404,12 +417,14 @@ function paint() {
   featuresByKey.forEach((group, key) => {
     group.forEach((feature) => applyState(feature.properties.segment, key));
   });
+  renderHouseDots();
   renderCard();
 }
 
 // Что известно про выбранное место: свежая отметка на этом куске, иначе общий цвет улицы.
 function stateAt() {
   if (!pick) return null;
+  if (pick.house && scope === HOUSE_SCOPE) return houseState(pick.key, pick.lon, pick.lat);
   if (scope) {
     const here = livePlaces
       .filter((p) => p.key === pick.key && distance([pick.lon, pick.lat], [p.lon, p.lat]) <= p.radius)
@@ -423,6 +438,7 @@ function stateAt() {
 function scopeText() {
   if (houses) return `дома ${houses.label}`;
   if (!scope) return "вся улица";
+  if (scope === HOUSE_SCOPE) return pick && pick.house ? `дом ${pick.house}` : `область около ${scope * 2} м`;
   return scope >= 500 ? "отрезок около 1 км" : `отрезок около ${scope * 2} м`;
 }
 
@@ -561,19 +577,107 @@ function renderCard() {
   markNote.textContent = "";
 }
 
+// Область отметки: круг радиуса radius вокруг точки.
+function circleRing(center, radius, steps = 48) {
+  const [kx, ky] = metersPerDegree(center[1]);
+  const ring = [];
+  for (let i = 0; i < steps; i += 1) {
+    const angle = (2 * Math.PI * i) / steps;
+    ring.push([center[0] + (Math.cos(angle) * radius) / kx, center[1] + (Math.sin(angle) * radius) / ky]);
+  }
+  ring.push(ring[0]);
+  return ring;
+}
+
 function renderPlaces() {
   const source = map.getSource("places");
-  if (!source) return;
+  const areas = map.getSource("areas");
+  if (!source || !areas) return;
   const features = [];
+  const zones = [];
   livePlaces.forEach((place) => {
+    const props = { status: place.status, level: place.level, exact: !!place.exact };
+    const ring = circleRing([place.lon, place.lat], place.radius);
+    zones.push({ type: "Feature", properties: props, geometry: { type: "Polygon", coordinates: [ring] } });
+    zones.push({ type: "Feature", properties: props, geometry: { type: "LineString", coordinates: ring } });
     const lines = piecesOf(place.key, [place.lon, place.lat], place.radius);
     if (!lines.length) return;
-    features.push({
-      type: "Feature",
-      properties: { status: place.status, level: place.level },
-      geometry: { type: "MultiLineString", coordinates: lines },
+    features.push({ type: "Feature", properties: props, geometry: { type: "MultiLineString", coordinates: lines } });
+  });
+  source.setData({ type: "FeatureCollection", features });
+  areas.setData({ type: "FeatureCollection", features: zones });
+}
+
+// Что известно про дом: область отметки по его улице, иначе улица целиком или график, иначе область
+// отметки на соседней улице, иначе вывод по соседям, иначе блёклая старая отметка, иначе «по умолчанию».
+function houseState(key, lon, lat) {
+  const at = [lon, lat];
+  const newest = (a, b) => b.at - a.at;
+  const covering = livePlaces.filter((p) => p.level !== "stale" && distance(at, [p.lon, p.lat]) <= p.radius);
+  const own = covering.filter((p) => p.key === key).sort(newest)[0];
+  if (own) return { power: own.status, level: own.level, live: own, exact: !!own.exact };
+  const street = stateOf(key, nearestSegmentOf(key, lon, lat));
+  if (street.level === "sure" || street.level === "likely" || street.level === "schedule") return street;
+  const other = covering.sort(newest)[0];
+  if (other) return { power: other.status, level: "area", live: other, exact: false, area: other };
+  if (street.level === "baseline") {
+    const old = livePlaces.filter((p) => p.key === key && distance(at, [p.lon, p.lat]) <= p.radius).sort(newest)[0];
+    if (old) return { power: old.status, level: "stale", live: old, exact: !!old.exact };
+  }
+  return street;
+}
+
+function nearestSegmentOf(key, lon, lat) {
+  let best = null;
+  candidatesNear(lon, lat, 80).forEach((segment) => {
+    const info = segInfo.get(segment);
+    if (!info || info.key !== key) return;
+    info.pts.forEach((pt) => {
+      const d = distance([lon, lat], pt);
+      if (!best || d < best.d) best = { d, segment };
     });
   });
+  if (best) return best.segment;
+  const found = nearestOnStreet(key, { lng: lon, lat });
+  return found ? found.segment : null;
+}
+
+async function loadAllHouses() {
+  if (housesAll || housesLoading) return;
+  housesLoading = true;
+  try {
+    const response = await fetch("data/houses.json");
+    housesAll = await response.json();
+  } catch (error) {
+    housesAll = null;
+  }
+  housesLoading = false;
+  renderHouseDots();
+}
+
+// Дома в окне карты точками: сплошная точка точные данные, кольцо отметка жителей или область.
+function renderHouseDots() {
+  const source = map.getSource("house-dots");
+  if (!source) return;
+  const features = [];
+  if (housesAll && map.getZoom() >= HOUSE_ZOOM && featuresByKey.size) {
+    const box = map.getBounds();
+    const [west, east, south, north] = [box.getWest(), box.getEast(), box.getSouth(), box.getNorth()];
+    scan: for (const key of Object.keys(housesAll)) {
+      for (const row of housesAll[key]) {
+        if (row[1] < west || row[1] > east || row[2] < south || row[2] > north) continue;
+        const state = houseState(key, row[1], row[2]);
+        features.push({
+          type: "Feature",
+          properties: { power: state.power, level: state.level, exact: !!state.exact, n: row[0], key },
+          geometry: { type: "Point", coordinates: [row[1], row[2]] },
+        });
+        if (features.length >= HOUSE_MAX) break scan;
+      }
+    }
+  } else if (!housesAll && map.getZoom() >= HOUSE_ZOOM) {
+    loadAllHouses();
+  }
   source.setData({ type: "FeatureCollection", features });
 }
 
@@ -636,7 +740,35 @@ function focusStreet(item) {
   paint();
 }
 
+// Нажатие на точку дома выбирает дом: отметка пойдёт по области около него.
+function pickHouse(point, lngLat) {
+  if (!housesAll || map.getZoom() < HOUSE_ZOOM || !map.getLayer("houses-dot")) return false;
+  const dots = map.queryRenderedFeatures(
+    [
+      [point.x - 12, point.y - 12],
+      [point.x + 12, point.y + 12],
+    ],
+    { layers: ["houses-dot"] }
+  );
+  if (!dots.length) return false;
+  const here = [lngLat.lng, lngLat.lat];
+  const dot = dots.sort(
+    (a, b) => distance(here, a.geometry.coordinates) - distance(here, b.geometry.coordinates)
+  )[0];
+  const item = index.find((row) => row.key === dot.properties.key);
+  scope = HOUSE_SCOPE;
+  setPick({
+    key: dot.properties.key,
+    name: item ? item.name : dot.properties.key,
+    lon: dot.geometry.coordinates[0],
+    lat: dot.geometry.coordinates[1],
+    house: String(dot.properties.n),
+  });
+  return true;
+}
+
 function pickAt(point, lngLat) {
+  if (pickHouse(point, lngLat)) return;
   const hits = map.queryRenderedFeatures(
     [
       [point.x - 18, point.y - 18],
@@ -810,6 +942,7 @@ function mark(status) {
   const body = { key: pick.key, status };
   if (scope) Object.assign(body, { lon: pick.lon, lat: pick.lat, radius: scope });
   if (scope && houses) body.label = `дома ${houses.label}`;
+  else if (scope === HOUSE_SCOPE && pick.house) body.label = `дом ${pick.house}`;
   const where = `${pick.name}, ${scopeText()}`;
   fetch("api/mark", {
     method: "POST",
@@ -1038,8 +1171,47 @@ function addStreets(streets) {
   const empty = { type: "FeatureCollection", features: [] };
   map.addSource("streets", { type: "geojson", data: streets, promoteId: "segment" });
   map.addSource("places", { type: "geojson", data: empty });
+  map.addSource("areas", { type: "geojson", data: empty });
+  map.addSource("house-dots", { type: "geojson", data: empty });
   map.addSource("pick", { type: "geojson", data: empty });
   const round = { "line-cap": "round", "line-join": "round" };
+  const statusColor = ["case", ["==", ["get", "status"], "on"], "#1b7f4e", "#b42318"];
+  const fadeOf = ["case", ["==", ["get", "level"], "stale"], 0.4, ["==", ["get", "level"], "likely"], 0.75, 1];
+  // Области отметок: лёгкая заливка круга, край сплошной у точных данных и пунктирный у отметок жителей.
+  map.addLayer(
+    {
+      id: "areas-fill",
+      type: "fill",
+      source: "areas",
+      filter: ["==", ["geometry-type"], "Polygon"],
+      paint: {
+        "fill-color": statusColor,
+        "fill-opacity": ["case", ["==", ["get", "level"], "stale"], 0.04, ["==", ["get", "level"], "likely"], 0.09, 0.13],
+      },
+    },
+    beforeId
+  );
+  map.addLayer(
+    {
+      id: "areas-edge",
+      type: "line",
+      source: "areas",
+      filter: ["all", ["==", ["geometry-type"], "LineString"], ["==", ["get", "exact"], true]],
+      paint: { "line-color": statusColor, "line-width": 2, "line-opacity": fadeOf },
+    },
+    beforeId
+  );
+  map.addLayer(
+    {
+      id: "areas-edge-approx",
+      type: "line",
+      source: "areas",
+      filter: ["all", ["==", ["geometry-type"], "LineString"], ["!=", ["get", "exact"], true]],
+      layout: { "line-cap": "butt" },
+      paint: { "line-color": statusColor, "line-width": 2, "line-dasharray": [3, 2], "line-opacity": fadeOf },
+    },
+    beforeId
+  );
   // Жёлтая подсветка под линиями: вся найденная улица видна на карте целиком.
   map.addLayer(
     {
@@ -1091,6 +1263,8 @@ function addStreets(streets) {
           "case",
           ["any", ["==", ["feature-state", "level"], "baseline"], ["==", ["feature-state", "level"], "neighbor"]],
           0,
+          ["!", ["boolean", ["feature-state", "exact"], false]],
+          0,
           ["==", ["feature-state", "level"], "stale"],
           0.4,
           ["==", ["feature-state", "level"], "schedule"],
@@ -1103,7 +1277,34 @@ function addStreets(streets) {
     },
     beforeId
   );
-  // Не настоящие отметки рисуем пунктиром: «по соседям» штрихами, «по сводке или по умолчанию» точками.
+  // Отметки жителей и чатов не точные данные: рисуем пунктиром.
+  map.addLayer(
+    {
+      id: "streets-approx",
+      type: "line",
+      source: "streets",
+      layout: { "line-cap": "butt" },
+      paint: {
+        "line-color": ["case", ["==", ["feature-state", "power"], "off"], "#b42318", "#1b7f4e"],
+        "line-width": 4.5,
+        "line-dasharray": [3, 1.4],
+        "line-opacity": [
+          "case",
+          ["boolean", ["feature-state", "exact"], false],
+          0,
+          ["==", ["feature-state", "level"], "sure"],
+          1,
+          ["==", ["feature-state", "level"], "likely"],
+          0.75,
+          ["==", ["feature-state", "level"], "stale"],
+          0.4,
+          0,
+        ],
+      },
+    },
+    beforeId
+  );
+  // Не настоящие отметки: «по соседям» частыми штрихами, «по сводке или по умолчанию» точками.
   map.addLayer(
     {
       id: "streets-nbr",
@@ -1112,8 +1313,8 @@ function addStreets(streets) {
       layout: { "line-cap": "butt" },
       paint: {
         "line-color": ["case", ["==", ["feature-state", "power"], "off"], "#b42318", "#1b7f4e"],
-        "line-width": 3.8,
-        "line-dasharray": [2, 1.4],
+        "line-width": 3.2,
+        "line-dasharray": [1, 1.5],
         "line-opacity": ["case", ["==", ["feature-state", "level"], "neighbor"], 0.85, 0],
       },
     },
@@ -1134,21 +1335,78 @@ function addStreets(streets) {
     },
     beforeId
   );
-  // Отметки по куску улицы лежат поверх цвета всей улицы.
+  // Отметки по куску улицы лежат поверх цвета всей улицы: сплошные у точных данных, пунктир у остальных.
+  const placeWidth = ["interpolate", ["linear"], ["zoom"], 11, 10, 14, 8, 17, 6];
   map.addLayer(
     {
       id: "places-line",
       type: "line",
       source: "places",
+      filter: ["==", ["get", "exact"], true],
       layout: round,
-      paint: {
-        "line-color": ["case", ["==", ["get", "status"], "on"], "#1b7f4e", "#b42318"],
-        "line-width": ["interpolate", ["linear"], ["zoom"], 11, 10, 14, 8, 17, 6],
-        "line-opacity": ["case", ["==", ["get", "level"], "stale"], 0.4, ["==", ["get", "level"], "likely"], 0.75, 1],
-      },
+      paint: { "line-color": statusColor, "line-width": placeWidth, "line-opacity": fadeOf },
     },
     beforeId
   );
+  map.addLayer(
+    {
+      id: "places-approx",
+      type: "line",
+      source: "places",
+      filter: ["!=", ["get", "exact"], true],
+      layout: { "line-cap": "butt", "line-join": "round" },
+      paint: { "line-color": statusColor, "line-width": placeWidth, "line-dasharray": [2.4, 1.2], "line-opacity": fadeOf },
+    },
+    beforeId
+  );
+  // Дома точками: сплошная точка точные данные, кольцо отметка жителей или область, мелкая точка «по умолчанию».
+  const houseColor = ["case", ["==", ["get", "power"], "off"], "#b42318", "#1b7f4e"];
+  const houseFade = [
+    "case",
+    ["==", ["get", "level"], "stale"],
+    0.45,
+    ["==", ["get", "level"], "likely"],
+    0.8,
+    ["==", ["get", "level"], "baseline"],
+    0.55,
+    1,
+  ];
+  map.addLayer(
+    {
+      id: "houses-dot",
+      type: "circle",
+      source: "house-dots",
+      paint: {
+        "circle-radius": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          16,
+          ["case", ["==", ["get", "level"], "baseline"], 2, 3.5],
+          19,
+          ["case", ["==", ["get", "level"], "baseline"], 3.5, 7],
+        ],
+        "circle-color": ["case", ["==", ["get", "exact"], true], houseColor, ["==", ["get", "level"], "baseline"], houseColor, "#fffdf8"],
+        "circle-stroke-color": ["case", ["==", ["get", "exact"], true], "#ffffff", houseColor],
+        "circle-stroke-width": ["case", ["==", ["get", "exact"], true], 1.5, ["==", ["get", "level"], "baseline"], 0, 2.2],
+        "circle-opacity": houseFade,
+        "circle-stroke-opacity": houseFade,
+      },
+    }
+  );
+  map.addLayer({
+    id: "houses-label",
+    type: "symbol",
+    source: "house-dots",
+    minzoom: 17,
+    layout: {
+      "text-field": ["get", "n"],
+      "text-font": ["Noto Sans Regular"],
+      "text-size": 11,
+      "text-offset": [0, -1],
+    },
+    paint: { "text-color": "#3a342d", "text-halo-color": "#ffffff", "text-halo-width": 1.5 },
+  });
   map.addLayer(
     {
       id: "pick-point",
@@ -1192,6 +1450,7 @@ function addStreets(streets) {
     paint: { "text-color": "#1d4f91", "text-halo-color": "#ffffff", "text-halo-width": 2 },
   });
   map.on("click", (event) => pickAt(event.point, event.lngLat));
+  map.on("moveend", renderHouseDots);
   map.on("mousemove", (event) => {
     const near = map.queryRenderedFeatures(
       [
