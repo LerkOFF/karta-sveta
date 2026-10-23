@@ -1,4 +1,4 @@
-// Страница «О карте»: как считается, откуда данные, свежие отметки и ручной ввод из чата.
+// Страница «О карте»: как считается, откуда данные, свежие отметки и подключение датчика.
 const LEVEL_WORD = {
   sure: "уверенно",
   likely: "скорее всего",
@@ -97,36 +97,6 @@ async function pullLive() {
   const rows = [...(data.reports || []), ...(data.places || [])].sort((a, b) => b.at - a.at);
   renderFeed(rows);
   renderSensorCount(data.sensors);
-}
-
-async function sendComment() {
-  const text = document.querySelector("#comment").value.trim();
-  const source = document.querySelector("#source").value.trim() || "чат";
-  const note = document.querySelector("#comment-note");
-  if (!text) {
-    note.textContent = "Вставь текст из группы.";
-    return;
-  }
-  const response = await fetch("api/comments", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, source }),
-  });
-  const result = await response.json();
-  if (!result.ok) {
-    note.textContent = response.status === 429 || response.status === 413
-      ? result.reason
-      : "Нужны название улицы и слова «свет есть» или «света нет». Район целиком не красится.";
-    return;
-  }
-  const names = result.streets.map((item) => item.name).join(", ");
-  const word = result.status === "on" ? "свет есть" : "света нет";
-  const fresh = result.streets.some((item) => item.new);
-  note.textContent = fresh
-    ? `${names}: ${word}. Видно всем; цвет блёкнет, если никто не подтверждает.`
-    : `${names}: ${word}. Такая отметка уже учтена.`;
-  document.querySelector("#comment").value = "";
-  await pullLive();
 }
 
 // Датчики: подключение, ссылка пульса и отключение.
@@ -238,12 +208,6 @@ document.querySelector("#sensor-add").addEventListener("click", () => {
 document.querySelector("#sensor-remove").addEventListener("click", () => {
   removeSensor().catch(() => {
     document.querySelector("#sensor-remove-note").textContent = "Сервер не ответил.";
-  });
-});
-
-document.querySelector("#send-comment").addEventListener("click", () => {
-  sendComment().catch(() => {
-    document.querySelector("#comment-note").textContent = "Сервер не ответил.";
   });
 });
 

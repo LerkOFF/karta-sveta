@@ -187,9 +187,9 @@ class PlacesTest(unittest.TestCase):
 
     def test_clean_radius(self):
         self.assertEqual(clean_radius(200), 200)
-        self.assertEqual(clean_radius(380.4), 380)
+        self.assertEqual(clean_radius(380.4), 200)
         self.assertEqual(clean_radius(5), 10)
-        self.assertEqual(clean_radius(99999), 2000)
+        self.assertEqual(clean_radius(99999), 200)
         self.assertEqual(clean_radius("x"), 100)
         self.assertEqual(clean_radius(None), 100)
 

@@ -19,6 +19,8 @@ const DEFAULT_SCOPE = 100;
 // Область «дом»: круг 18 м, накрывает один дом, дом напротив остаётся при своём. Дома рисуются точками с приближения HOUSE_ZOOM.
 const HOUSE_SCOPE = 18;
 const HOUSE_ZOOM = 16;
+// Дальше 200 м вокруг человека свет не отмечаем, улицу целиком тоже.
+const MAX_SCOPE = 200;
 const HOUSE_MAX = 6000;
 
 const queryInput = document.querySelector("#query");
@@ -437,9 +439,8 @@ function stateAt() {
 
 function scopeText() {
   if (houses) return `дома ${houses.label}`;
-  if (!scope) return "вся улица";
-  if (scope === HOUSE_SCOPE) return pick && pick.house ? `дом ${pick.house}` : `область около ${scope * 2} м`;
-  return scope >= 500 ? "отрезок около 1 км" : `отрезок около ${scope * 2} м`;
+  if (scope === HOUSE_SCOPE) return pick && pick.house ? `дом ${pick.house}` : "один дом";
+  return `в радиусе ${scope} м`;
 }
 
 // Браузеры на Android сами говорят, что человек на мобильной сети; тогда адрес дома он не покажет.
@@ -1025,9 +1026,14 @@ async function applyHouses() {
   const lats = snapped.map((point) => point.lat);
   const center = [(Math.min(...lons) + Math.max(...lons)) / 2, (Math.min(...lats) + Math.max(...lats)) / 2];
   const reach = Math.max(...snapped.map((point) => distance(center, [point.lon, point.lat])));
+  if (reach + 25 > MAX_SCOPE) {
+    flash = "";
+    markNote.textContent = `Дома ${label} лежат дальше ${MAX_SCOPE} м от центра: отметить можно только в радиусе ${MAX_SCOPE} м. Возьмите диапазон поуже.`;
+    return;
+  }
   houses = { label, count: chosen.length, items: chosen, estimated: Boolean(estimate) };
   pick = { key, name: item.name, lon: center[0], lat: center[1] };
-  scope = Math.min(2000, Math.max(50, Math.ceil(reach) + 25));
+  scope = Math.max(50, Math.ceil(reach) + 25);
   focusKey = null;
   flash = notice;
   const all = chosen.map(([, lon, lat]) => [lon, lat]).concat(snapped.map((point) => [point.lon, point.lat]));

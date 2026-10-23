@@ -252,7 +252,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/watch/check":
             self.watch_check(payload)
             return
-        if path not in ("/api/comments", "/api/mark"):
+        if path != "/api/mark":
             self.send_error(404)
             return
         ip = self.client_ip()
@@ -261,37 +261,27 @@ class Handler(BaseHTTPRequestHandler):
             return
         who = store.reporter_id(SECRET["salt"], "web", ip, self.headers.get("User-Agent", ""))
         now = int(time.time() * 1000)
-        if path == "/api/comments":
-            result = add_reports(
-                str(payload.get("text") or ""),
-                str(payload.get("source") or "чат"),
-                "comment",
-                who,
-                at=now,
-            )
-        else:
-            place = None
-            lon, lat = payload.get("lon"), payload.get("lat")
-            if lon is not None or lat is not None:
-                if not valid_point(lon, lat):
-                    self.send_json({"ok": False, "reason": "точка вне Донецка"})
-                    return
-                place = (float(lon), float(lat), clean_radius(payload.get("radius")))
-            result = add_reports(
-                str(payload.get("label") or "")[:40] if place else "",
-                "кнопка на карте",
-                "button",
-                who,
-                status=payload.get("status"),
-                key=str(payload.get("key") or ""),
-                at=now,
-                segment=str(payload.get("segment") or "") or None,
-                place=place,
-            )
-            if result["ok"]:
-                sensor = self.auto_watch(ip, payload, str(payload.get("key") or ""), place)
-                if sensor:
-                    result["sensor"] = sensor
+        # Только отметка в радиусе до 200 м вокруг точки: улицу целиком публично отметить нельзя.
+        lon, lat = payload.get("lon"), payload.get("lat")
+        if not valid_point(lon, lat):
+            self.send_json({"ok": False, "reason": "Отметьте место на карте: свет отмечается в радиусе до 200 м."})
+            return
+        place = (float(lon), float(lat), clean_radius(payload.get("radius")))
+        result = add_reports(
+            str(payload.get("label") or "")[:40],
+            "кнопка на карте",
+            "button",
+            who,
+            status=payload.get("status"),
+            key=str(payload.get("key") or ""),
+            at=now,
+            segment=str(payload.get("segment") or "") or None,
+            place=place,
+        )
+        if result["ok"]:
+            sensor = self.auto_watch(ip, payload, str(payload.get("key") or ""), place)
+            if sensor:
+                result["sensor"] = sensor
         self.send_json(result)
 
     def pulse(self, token):
