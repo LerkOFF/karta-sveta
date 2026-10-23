@@ -461,3 +461,29 @@ body.page { display: block; height: auto; }
   aside { width: auto; overflow: visible; border-left: 0; border-top: 1px solid var(--line); }
   #map > .bulletin { top: auto; right: auto; left: 10px; bottom: 56px; max-width: calc(100% - 20px); }
 }
+
+/* Страницы для поисковиков: улицы, районы, график, телефоны */
+.seo h3 { margin: 14px 0 6px; font-size: 15px; font-weight: 600; }
+.seo p { margin: 0 0 10px; }
+.topnav { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-bottom: 14px; font: 13px/1.2 ui-sans-serif, system-ui, sans-serif; }
+.topnav a, .crumbs a { color: var(--pick); text-decoration: none; }
+.crumbs { margin-bottom: 6px; text-transform: none; }
+.status { margin: 0 0 12px; padding: 12px 14px; border: 1px solid var(--line); border-left: 6px solid var(--muted); border-radius: 8px; background: var(--card); }
+.status strong { display: block; margin-bottom: 6px; font-size: 20px; }
+.status.on { border-left-color: var(--on); }
+.status.off { border-left-color: var(--off); }
+.status p { margin: 0 0 6px; font: 14px/1.4 ui-sans-serif, system-ui, sans-serif; }
+.cta { display: inline-block; padding: 14px 20px; text-decoration: none; }
+.pill small { color: var(--muted); }
+.streets { columns: 2 220px; margin: 0; padding-left: 18px; font: 14px/1.7 ui-sans-serif, system-ui, sans-serif; }
+.streets a { color: var(--pick); text-decoration: none; }
+table.grid { width: 100%; border-collapse: collapse; font: 14px/1.4 ui-sans-serif, system-ui, sans-serif; }
+table.grid th, table.grid td { padding: 8px 10px; border: 1px solid var(--line); text-align: center; }
+table.grid th { background: var(--card); font-weight: 600; }
+table.grid td.on { background: #dff0e5; color: var(--on); }
+table.grid td.off { background: #f7dcd8; color: var(--off); }
+table.grid .phones { justify-content: center; }
+.seo .phones a { color: var(--pick); text-decoration: none; }
+.faq h3 { margin-top: 14px; }
+.seo-links { display: flex; flex-wrap: wrap; gap: 6px 14px; font: 14px/1.5 ui-sans-serif, system-ui, sans-serif; }
+.seo-links a { color: var(--pick); text-decoration: none; }

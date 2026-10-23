@@ -2,4 +2,6 @@ User-agent: *
 Disallow: /api/
 Allow: /
 
+Clean-param: street /
+
 Sitemap: https://xn----ctbhcc4athwm3c.xn--p1ai/sitemap.xml

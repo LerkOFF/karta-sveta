@@ -9,6 +9,7 @@ import html
 import json
 import re
 import time
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote
@@ -148,7 +149,7 @@ class Site:
     def live(self):
         now = time.time()
         if self._live[1] is None or now - self._live[0] > LIVE_TTL:
-            with store.connect() as conn:
+            with closing(store.connect()) as conn:
                 state = store.live(conn)
             self._live = (now, state)
         return self._live[1]
@@ -186,16 +187,8 @@ class Site:
 
     def layout(self, path, title, description, body, ld=None, og_image=True):
         url = SITE + path
-        graph = [
-            {
-                "@context": "https://schema.org",
-                "@type": "BreadcrumbList",
-                "itemListElement": [],
-            }
-        ]
-        graph = [item for item in (ld or [])]
         scripts = "".join(
-            f'<script type="application/ld+json">{json.dumps(item, ensure_ascii=False)}</script>' for item in graph
+            f'<script type="application/ld+json">{json.dumps(item, ensure_ascii=False)}</script>' for item in (ld or [])
         )
         image = f'<meta property="og:image" content="{SITE}/og.png"><meta name="twitter:image" content="{SITE}/og.png">' if og_image else ""
         return f"""<!DOCTYPE html>
@@ -222,7 +215,7 @@ class Site:
   <link rel="icon" type="image/png" sizes="120x120" href="/favicon-120.png">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-  <link rel="stylesheet" href="/styles.css?v=19">
+  <link rel="stylesheet" href="/styles.css?v=21">
   {scripts}
   <script>
     (function(m,e,t,r,i,k,a){{m[i]=m[i]||function(){{(m[i].a=m[i].a||[]).push(arguments)}};
@@ -498,7 +491,6 @@ class Site:
         q = self.queues
         sched = self.schedule_state()
         until = ".".join(reversed(q["publishedUntil"].split("-")))
-        slots = [f"{a}:00–{b}:00" for a, b in q["slots"]]
         if sched["expired"]:
             note = f"График подачи света для Киевского района действовал до {until}. Новой карточки пока нет, поэтому по графику улицы не закрашиваются."
         else:
@@ -543,7 +535,7 @@ class Site:
         source_line = f'<p class="note">Источник графика: <a href="{esc(source)}" rel="nofollow noopener">публикация</a>.</p>' if source else ""
         body = f"""    {crumb_html}
     <h1>График отключений света в Донецке</h1>
-    <p>{esc(state)} Для остальных районов графика, опубликованного Донецкэнерго для улиц, нет: смотрите отметки на карте и <a href="/rayony">телефоны диспетчеров районов</a>.</p>
+    <p>{esc(state)} Для остальных районов в карту график пока не загружен: смотрите отметки на карте и <a href="/rayony">телефоны диспетчеров районов</a>.</p>
     <p>{self.map_link(None, 'Открыть карту света')}</p>
     <section class="block">
       <h2>Сегодня по очередям</h2>

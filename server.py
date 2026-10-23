@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import bulletins
 import netinfo
+import seo
 import sensors
 import store
 from model import HORIZON_MIN, MIN_MS, clean_radius, valid_point
@@ -46,7 +47,8 @@ PUBLIC_FILES = {
     "/favicon-120.png": "favicon-120.png",
     "/apple-touch-icon.png": "apple-touch-icon.png",
     "/robots.txt": "robots.txt",
-    "/sitemap.xml": "sitemap.xml",
+    "/og.png": "og.png",
+    "/e2cda9a584eeb33096fc4f8a6a2a5638.txt": "e2cda9a584eeb33096fc4f8a6a2a5638.txt",
 }
 LONG_CACHE = ("/vendor/", "/data/streets", "/data/houses")
 
@@ -71,6 +73,9 @@ HOUSES = load_houses()
 
 SECRET = store.load_secret()
 store.init()
+
+# Страницы для поисковиков (улицы, районы, график, телефоны, sitemap): seo.py
+SITE = seo.Site(HOUSES)
 
 
 def rate_ok(ip: str, limit: int = RATE_LIMIT, window: int = RATE_WINDOW) -> bool:
@@ -206,6 +211,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path.startswith("/api/pulse/"):
             self.pulse(path[len("/api/pulse/"):])
+            return
+        page = SITE.route(path)
+        if page:
+            status, body, ctype = page
+            cache = "public, max-age=60" if status == 200 else "no-store"
+            self.send_bytes(status, body.encode("utf-8"), ctype, cache)
             return
         target = self.static_path(path)
         if not target or not target.is_file():

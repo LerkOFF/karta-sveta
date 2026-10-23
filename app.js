@@ -1648,6 +1648,13 @@ function addStreets(streets) {
   paint();
 }
 
+// Ссылки со страниц улиц ведут на /?street=<ключ улицы>: карта сразу приближает эту улицу.
+function openFromLink() {
+  const key = new URLSearchParams(location.search).get("street");
+  const item = key && index.find((street) => street.key === key);
+  if (item) focusStreet(item);
+}
+
 async function boot() {
   const [indexResponse, streetResponse, queueResponse, contactResponse] = await Promise.all([
     fetch("data/streets-index.json"),
@@ -1663,6 +1670,7 @@ async function boot() {
   const start = () => {
     useRussianLabels();
     addStreets(streets);
+    openFromLink();
     pullLive().catch(() => {});
     setInterval(() => {
       pullLive().catch(() => {});
