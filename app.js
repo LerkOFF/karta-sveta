@@ -518,6 +518,10 @@ function pickAt(point, lngLat) {
     { layers: ["streets-line"] }
   );
   if (!hits.length) {
+    if (pick || focusKey) {
+      setPick(null);
+      return;
+    }
     flash = "";
     markNote.textContent = "Рядом нет улицы. Нажмите ближе к линии улицы.";
     return;
