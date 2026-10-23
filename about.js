@@ -96,6 +96,7 @@ async function pullLive() {
   clockShift = Number(data.now) ? data.now - Date.now() : 0;
   const rows = [...(data.reports || []), ...(data.places || [])].sort((a, b) => b.at - a.at);
   renderFeed(rows);
+  renderSensorCount(data.sensors);
 }
 
 async function sendComment() {
@@ -127,6 +128,123 @@ async function sendComment() {
   document.querySelector("#comment").value = "";
   await pullLive();
 }
+
+// Датчики: подключение, ссылка пульса и отключение.
+const TOKEN_KEY = "karta-sensor-token";
+
+function renderSensorCount(counts) {
+  const el = document.querySelector("#sensor-count");
+  const total = counts ? counts.on + counts.off : 0;
+  el.textContent = total ? `Сейчас датчиков: ${total}, свет есть у ${counts.on}, нет у ${counts.off}.` : "";
+}
+
+function remember(token) {
+  try {
+    localStorage.setItem(TOKEN_KEY, token);
+  } catch (error) {
+    /* без хранилища токен остаётся только на экране */
+  }
+}
+
+function remembered() {
+  try {
+    return localStorage.getItem(TOKEN_KEY) || "";
+  } catch (error) {
+    return "";
+  }
+}
+
+function block(tag, text) {
+  const el = document.createElement(tag);
+  el.textContent = text;
+  return el;
+}
+
+function showSensor(result) {
+  const out = document.querySelector("#sensor-result");
+  const where = `${result.name}, дом ${result.house}${result.exact ? "" : " (ближайший найденный в базе)"}`;
+  const parts = [block("p", `Подключено: ${where}. Красит кусок улицы около ${result.radius} м.`)];
+  if (result.mode === "pulse") {
+    const url = new URL(`api/pulse/${result.token}`, location.href).href;
+    parts.push(
+      block("p", "Пусть на роутере, Raspberry Pi или любом компьютере, который всегда в розетке, раз в минуту выполняется эта команда (cron):"),
+      block("pre", `* * * * * curl -fsS -m 10 ${url} >/dev/null 2>&1`),
+      block("p", "Проверить вручную: откройте ссылку или выполните curl, придёт {\"ok\": true}. Датчик заработает после первого пульса, «нет» поставит после 4 минут тишины."),
+      block("pre", url)
+    );
+  } else {
+    parts.push(block("p", "Роутер отвечает, проверяем его раз в минуту. «Нет» ставится после трёх пропущенных проверок подряд."));
+  }
+  parts.push(
+    block("p", "Токен нужен, чтобы отключить датчик. Сохраните его, потом показать не сможем:"),
+    block("pre", result.token)
+  );
+  out.replaceChildren(...parts);
+}
+
+async function addSensor() {
+  const out = document.querySelector("#sensor-result");
+  const address = document.querySelector("#sensor-address").value.trim();
+  const mode = document.querySelector("input[name=sensor-mode]:checked").value;
+  if (!address) {
+    out.textContent = "Напиши улицу и номер дома, например «Артёма 10».";
+    return;
+  }
+  const button = document.querySelector("#sensor-add");
+  button.disabled = true;
+  out.textContent = mode === "ping" ? "Проверяю, отвечает ли роутер…" : "Подключаю…";
+  try {
+    const response = await fetch("api/sensor", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ address, mode }),
+    });
+    const result = await response.json();
+    if (!result.ok) {
+      out.textContent = result.reason || "Не получилось подключить.";
+      return;
+    }
+    remember(result.token);
+    document.querySelector("#sensor-token").value = result.token;
+    showSensor(result);
+    await pullLive();
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function removeSensor() {
+  const note = document.querySelector("#sensor-remove-note");
+  const token = document.querySelector("#sensor-token").value.trim();
+  if (!token) {
+    note.textContent = "Вставь токен датчика.";
+    return;
+  }
+  const response = await fetch("api/sensor/delete", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
+  });
+  const result = await response.json();
+  note.textContent = result.ok ? "Датчик отключён, IP удалён." : result.reason || "Не получилось.";
+  if (result.ok) {
+    document.querySelector("#sensor-token").value = "";
+    remember("");
+    await pullLive();
+  }
+}
+
+document.querySelector("#sensor-token").value = remembered();
+document.querySelector("#sensor-add").addEventListener("click", () => {
+  addSensor().catch(() => {
+    document.querySelector("#sensor-result").textContent = "Сервер не ответил.";
+  });
+});
+document.querySelector("#sensor-remove").addEventListener("click", () => {
+  removeSensor().catch(() => {
+    document.querySelector("#sensor-remove-note").textContent = "Сервер не ответил.";
+  });
+});
 
 document.querySelector("#send-comment").addEventListener("click", () => {
   sendComment().catch(() => {

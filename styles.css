@@ -184,6 +184,23 @@ textarea {
 
 .note { min-height: 1.4em; }
 
+/* Подключение датчика на странице «О карте» */
+.modes { margin: 12px 0 0; padding: 0; border: 0; }
+.modes label { display: block; margin-bottom: 8px; font: 14px/1.4 ui-sans-serif, system-ui, sans-serif; }
+.modes input { margin-right: 4px; }
+#sensor-block .field { margin-top: 12px; }
+#sensor-result pre {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--ink);
+  font: 13px/1.4 ui-monospace, Menlo, monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
 .feed, ol { margin: 0; padding-left: 18px; }
 .feed { list-style: none; padding: 0; }
 .feed li { padding: 8px 0; border-bottom: 1px solid var(--line); }

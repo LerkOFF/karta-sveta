@@ -52,6 +52,27 @@ CREATE TABLE IF NOT EXISTS bulletins (
     ext_id TEXT UNIQUE
 );
 CREATE INDEX IF NOT EXISTS bulletins_at ON bulletins (at);
+
+CREATE TABLE IF NOT EXISTS sensors (
+    id INTEGER PRIMARY KEY,
+    token_hash TEXT NOT NULL UNIQUE,
+    mode TEXT NOT NULL CHECK (mode IN ('pulse', 'ping')),
+    key TEXT NOT NULL,
+    name TEXT NOT NULL,
+    lon REAL NOT NULL,
+    lat REAL NOT NULL,
+    radius INTEGER NOT NULL,
+    ip TEXT,
+    owner TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    last_seen INTEGER,
+    misses INTEGER NOT NULL DEFAULT 0,
+    state TEXT CHECK (state IN ('on', 'off')),
+    state_at INTEGER,
+    reported_at INTEGER,
+    quiet INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS sensors_owner ON sensors (owner);
 """
 
 
@@ -202,4 +223,12 @@ def live(conn, now_ms=None):
         places.extend(assess_places(items, now_ms, restored))
     places.sort(key=lambda item: item["at"])
     latest = clusters[-1] if clusters else None
-    return {"reports": result, "places": places, "bulletin": latest}
+    return {"reports": result, "places": places, "bulletin": latest, "sensors": sensor_counts(conn)}
+
+
+def sensor_counts(conn):
+    """Сколько датчиков сейчас видят свет и сколько нет. Адресов и IP здесь нет."""
+    counts = {"on": 0, "off": 0}
+    for row in conn.execute("SELECT state, COUNT(*) AS n FROM sensors WHERE state IS NOT NULL AND quiet = 0 GROUP BY state"):
+        counts[row["state"]] = row["n"]
+    return counts

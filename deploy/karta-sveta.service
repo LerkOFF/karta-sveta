@@ -13,6 +13,9 @@ Environment=PYTHONDONTWRITEBYTECODE=1
 ExecStart=/usr/bin/python3 server.py
 Restart=always
 RestartSec=3
+# регистрация датчика проверяет роутер пингом: нужны права на сырые сокеты
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true

@@ -17,6 +17,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import bulletins
+import sensors
 import store
 from model import HORIZON_MIN, MIN_MS, clean_radius, valid_point
 from parsing import KEYS, status_of, streets_in
@@ -70,13 +71,14 @@ SECRET = store.load_secret()
 store.init()
 
 
-def rate_ok(ip: str) -> bool:
+def rate_ok(ip: str, limit: int = RATE_LIMIT, window: int = RATE_WINDOW) -> bool:
+    """Не больше limit запросов за window секунд. ip - любой ключ счётчика."""
     now = time.time()
     with _hits_lock:
         queue = _hits[ip]
-        while queue and now - queue[0] > RATE_WINDOW:
+        while queue and now - queue[0] > window:
             queue.popleft()
-        if len(queue) >= RATE_LIMIT:
+        if len(queue) >= limit:
             return False
         queue.append(now)
         return True
@@ -200,6 +202,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/health":
             self.send_json({"ok": True})
             return
+        if path.startswith("/api/pulse/"):
+            self.pulse(path[len("/api/pulse/"):])
+            return
         target = self.static_path(path)
         if not target or not target.is_file():
             self.send_error(404)
@@ -232,6 +237,15 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/bulletin":
             self.bulletin(payload)
+            return
+        if path.startswith("/api/pulse/"):
+            self.pulse(path[len("/api/pulse/"):])
+            return
+        if path == "/api/sensor":
+            self.sensor_register(payload)
+            return
+        if path == "/api/sensor/delete":
+            self.sensor_delete(payload)
             return
         if path not in ("/api/comments", "/api/mark"):
             self.send_error(404)
@@ -270,6 +284,103 @@ class Handler(BaseHTTPRequestHandler):
                 place=place,
             )
         self.send_json(result)
+
+    def pulse(self, token):
+        """Пульс датчика: устройство раз в минуту открывает /api/pulse/<токен>."""
+        now = int(time.time() * 1000)
+        with store.connect() as conn:
+            state = sensors.beat(conn, token, now, SECRET["salt"])
+        if state is None:
+            if not rate_ok("badtoken:" + self.client_ip(), 20, 10 * 60):
+                self.send_json({"ok": False, "reason": "слишком часто"}, 429)
+                return
+            self.send_json({"ok": False, "reason": "такого датчика нет"}, 404)
+            return
+        self.send_json({"ok": True, **state})
+
+    def sensor_register(self, payload):
+        """Новый датчик: {"address": "Артёма 10", "mode": "pulse" | "ping"}.
+
+        В режиме ping пингуется IP, с которого пришёл запрос: чужой адрес так не подключить.
+        """
+        ip = self.client_ip()
+        if not rate_ok("sensor:" + ip, 10, 60 * 60):
+            self.send_json({"ok": False, "reason": "слишком часто, попробуй позже"}, 429)
+            return
+        mode = payload.get("mode")
+        if mode not in ("pulse", "ping"):
+            self.send_json({"ok": False, "reason": "выбери способ проверки"})
+            return
+        address = str(payload.get("address") or "")[:120]
+        found = streets_in(address)
+        number = sensors.house_number(address)
+        if len(found) != 1 or not number:
+            self.send_json({"ok": False, "reason": "Напиши одну улицу и номер дома, например «Артёма 10»."})
+            return
+        street = found[0]
+        house = sensors.find_house(HOUSES.get(street["key"], []), number)
+        if not house:
+            self.send_json({"ok": False, "reason": f"Для улицы {street['name']} нет домов в базе адресов."})
+            return
+        if house.get("ambiguous"):
+            self.send_json(
+                {"ok": False, "reason": "Дом с таким номером есть в разных местах этой улицы, напиши соседнюю улицу или другой дом рядом."}
+            )
+            return
+        owner = store.reporter_id(SECRET["salt"], "owner", ip)
+        now = int(time.time() * 1000)
+        public_ip = None
+        if mode == "ping":
+            public_ip = sensors.global_ipv4(ip)
+            if not public_ip:
+                self.send_json(
+                    {
+                        "ok": False,
+                        "reason": "Для проверки пингом открой страницу из домашней сети по IPv4 с белым адресом. С мобильного интернета и за общим адресом провайдера это не работает, выбери пульс.",
+                    }
+                )
+                return
+        with store.connect() as conn:
+            if sensors.owner_count(conn, owner) >= sensors.MAX_PER_OWNER:
+                self.send_json({"ok": False, "reason": f"С одного адреса можно подключить не больше {sensors.MAX_PER_OWNER} датчиков."})
+                return
+            if public_ip and sensors.ip_taken(conn, public_ip):
+                self.send_json({"ok": False, "reason": "Этот адрес уже подключён."})
+                return
+        if public_ip and not sensors.ping(public_ip, count=3):
+            self.send_json(
+                {
+                    "ok": False,
+                    "reason": "Роутер не отвечает на ping снаружи. Включи ответ на ping из интернета (WAN) в его настройках или выбери пульс.",
+                }
+            )
+            return
+        with store.connect() as conn:
+            token = sensors.create(
+                conn, mode, street, house["lon"], house["lat"], owner, now, ip=public_ip, alive=bool(public_ip)
+            )
+            sensor = sensors.by_token(conn, token)
+            sensors.settle(conn, sensor, now, SECRET["salt"])
+        self.send_json(
+            {
+                "ok": True,
+                "mode": mode,
+                "token": token,
+                "name": street["name"],
+                "house": house["label"],
+                "exact": house["exact"],
+                "radius": sensors.RADIUS,
+            }
+        )
+
+    def sensor_delete(self, payload):
+        """Удаляет датчик по токену вместе с IP."""
+        if not rate_ok("sensor-del:" + self.client_ip(), 20, 60 * 60):
+            self.send_json({"ok": False, "reason": "слишком часто"}, 429)
+            return
+        with store.connect() as conn:
+            gone = sensors.remove(conn, str(payload.get("token") or ""))
+        self.send_json({"ok": gone, "reason": "" if gone else "такого датчика нет"})
 
     def bulletin(self, payload):
         """Общегородская сводка («все ТП запитаны», «частично обесточены районы»).
