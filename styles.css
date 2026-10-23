@@ -48,6 +48,18 @@ aside {
   background: var(--bg);
 }
 
+/* Последняя отметка: компактная строка, прижата к низу правой панели */
+.last-mark {
+  position: sticky;
+  bottom: 0;
+  padding: 8px 18px 10px;
+  border-top: 1px solid var(--line);
+  background: var(--bg);
+  font: 12px/1.35 ui-sans-serif, system-ui, sans-serif;
+  color: var(--muted);
+}
+.last-mark b { display: block; color: var(--ink); font-weight: 600; }
+
 .mast, .block { padding: 16px 18px; }
 .mast-note { margin: 6px 0 0; color: var(--muted); font: 12px/1.35 ui-sans-serif, system-ui, sans-serif; }
 .block { border-top: 1px solid var(--line); }

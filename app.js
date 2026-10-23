@@ -44,6 +44,7 @@ const toInput = document.querySelector("#h-to");
 const housesBtn = document.querySelector("#h-go");
 const groupsEl = document.querySelector("#groups");
 const phonesEl = document.querySelector("#phones");
+const lastMarkEl = document.querySelector("#last-mark");
 const watchEl = document.querySelector("#watch");
 const watchText = document.querySelector("#watch-text");
 const watchOffBtn = document.querySelector("#watch-off");
@@ -100,6 +101,25 @@ function ago(ms) {
   const rest = min % 60;
   if (hours >= 24) return "больше суток назад";
   return rest ? `${hours} ч ${rest} мин назад` : `${hours} ч назад`;
+}
+
+// Последняя отметка за сутки: где, что, когда, откуда и насколько ей верить, коротко.
+function renderLastMark() {
+  const latest = [...liveReports, ...livePlaces].sort((a, b) => b.at - a.at)[0];
+  lastMarkEl.replaceChildren();
+  const head = document.createElement("b");
+  if (!latest) {
+    head.textContent = "Отметок за сутки пока нет";
+    lastMarkEl.append(head);
+    return;
+  }
+  head.textContent = `Последняя отметка: ${ago(latest.at)}`;
+  const where = latest.label || (latest.radius ? `в радиусе ${latest.radius} м` : "вся улица");
+  const trust = latest.exact ? "точные данные" : latest.unverified ? "не подтверждено" : "со слов жителей";
+  const more = latest.sources > 1 ? `, ${sourcesWord(latest.sources)}` : "";
+  const line = document.createElement("span");
+  line.textContent = `${latest.name}, ${where}: ${latest.status === "on" ? "свет есть" : "света нет"}. Источник: ${latest.source || "не указан"} · ${trust}${more}`;
+  lastMarkEl.append(head, line);
 }
 
 function sourcesWord(count) {
@@ -1098,6 +1118,7 @@ async function pullLive() {
   liveByKey = new Map(liveReports.map((item) => [item.key, item]));
   livePlaces = Array.isArray(data.places) ? data.places : [];
   bulletin = data.bulletin || null;
+  renderLastMark();
   renderBulletin();
   renderPlaces();
   if (featuresByKey.size) {
