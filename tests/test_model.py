@@ -21,6 +21,56 @@ def row(minutes_ago, status="off", reporter="a", kind="chat", key="артема"
     }
 
 
+def place(minutes_ago, status, lon, radius, reporter):
+    return dict(row(minutes_ago, status=status, reporter=reporter, kind="button"), lon=lon, lat=48.0, radius=radius, text="")
+
+
+# градус долготы на широте 48 около 74 500 м
+M = 1 / 74500
+
+
+class ZonesTest(unittest.TestCase):
+    def test_opposite_marks_far_apart_stay_separate_zones(self):
+        hospital = place(30, "on", 37.8, 200, "a")
+        mall = place(5, "off", 37.8 + 150 * M, 200, "b")
+        zones = assess_places([hospital, mall], NOW)
+        self.assertEqual(sorted(z["status"] for z in zones), ["off", "on"])
+        self.assertFalse(any(z["conflict"] for z in zones))
+
+    def test_opposite_marks_in_one_yard_are_a_dispute(self):
+        zones = assess_places([place(30, "on", 37.8, 200, "a"), place(5, "off", 37.8 + 30 * M, 200, "b")], NOW)
+        self.assertEqual(len(zones), 1)
+        self.assertTrue(zones[0]["conflict"])
+        self.assertEqual(zones[0]["status"], "off")
+
+    def test_one_house_mark_survives_a_newer_area_around_it(self):
+        house = place(30, "on", 37.8, 18, "a")
+        area = place(5, "off", 37.8 + 30 * M, 200, "b")
+        zones = assess_places([house, area], NOW)
+        self.assertEqual(sorted((z["status"], z["radius"]) for z in zones), [("off", 200), ("on", 18)])
+
+    def test_house_mark_inside_an_area_center_is_not_a_dispute_with_it(self):
+        house = place(5, "on", 37.8 + 10 * M, 18, "a")
+        area = place(30, "off", 37.8, 110, "b")
+        zones = assess_places([house, area], NOW)
+        self.assertEqual(sorted(z["status"] for z in zones), ["off", "on"])
+        self.assertFalse(any(z["conflict"] for z in zones))
+
+    def test_two_house_marks_in_one_yard_still_dispute(self):
+        zones = assess_places([place(30, "on", 37.8, 18, "a"), place(5, "off", 37.8 + 10 * M, 18, "b")], NOW)
+        self.assertEqual(len(zones), 1)
+        self.assertTrue(zones[0]["conflict"])
+
+    def test_house_mark_radius_is_allowed_down_to_the_house(self):
+        self.assertEqual(clean_radius(18), 18)
+        self.assertEqual(clean_radius(1), 10)
+
+    def test_same_answer_within_radius_still_confirms(self):
+        zones = assess_places([place(30, "off", 37.8, 200, "a"), place(5, "off", 37.8 + 150 * M, 200, "b")], NOW)
+        self.assertEqual(len(zones), 1)
+        self.assertEqual(zones[0]["sources"], 2)
+
+
 class ExactTest(unittest.TestCase):
     def test_only_official_and_sensor_are_exact(self):
         for kind, exact in (("official", True), ("sensor", True), ("chat", False), ("channel", False), ("button", False), ("comment", False)):
@@ -138,7 +188,7 @@ class PlacesTest(unittest.TestCase):
     def test_clean_radius(self):
         self.assertEqual(clean_radius(200), 200)
         self.assertEqual(clean_radius(380.4), 380)
-        self.assertEqual(clean_radius(5), 30)
+        self.assertEqual(clean_radius(5), 10)
         self.assertEqual(clean_radius(99999), 2000)
         self.assertEqual(clean_radius("x"), 100)
         self.assertEqual(clean_radius(None), 100)

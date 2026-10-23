@@ -16,8 +16,8 @@ const CELL = 0.0045;
 // Длина отмечаемого куска улицы вокруг нажатия: радиус в метрах, 0 = вся улица.
 const DEFAULT_SCOPE = 100;
 
-// Область «дом»: круг около 80 м вокруг дома. Дома рисуются точками с приближения HOUSE_ZOOM.
-const HOUSE_SCOPE = 40;
+// Область «дом»: круг 18 м, накрывает один дом, дом напротив остаётся при своём. Дома рисуются точками с приближения HOUSE_ZOOM.
+const HOUSE_SCOPE = 18;
 const HOUSE_ZOOM = 16;
 const HOUSE_MAX = 6000;
 
@@ -551,6 +551,116 @@ function circleRing(center, radius, steps = 48) {
   return ring;
 }
 
+// Зоны разных ответов не налезают друг на друга и касаются по границе: точка принадлежит ближайшей
+// отметке из тех, что её накрывают. Здесь о том, кому принадлежит точка, если рядом есть отметка с другим ответом.
+function zoneRivals(place) {
+  const center = [place.lon, place.lat];
+  return livePlaces.filter(
+    (other) =>
+      other !== place &&
+      other.level !== "stale" &&
+      other.status !== place.status &&
+      distance(center, [other.lon, other.lat]) < place.radius + other.radius
+  );
+}
+
+function beats(rival, place, at) {
+  const near = distance(at, [rival.lon, rival.lat]);
+  if (near > rival.radius) return false;
+  const own = distance(at, [place.lon, place.lat]);
+  return near < own || (near === own && rival.at > place.at);
+}
+
+function ownsPoint(place, rivals, at) {
+  return distance(at, [place.lon, place.lat]) <= place.radius + 0.5 && !rivals.some((rival) => beats(rival, place, at));
+}
+
+// Контур зоны: круг, срезанный там, где точка уже ближе к отметке с другим ответом. cut[i] значит,
+// что вершина i лежит на общей границе с соседней зоной.
+function zoneShape(place) {
+  const center = [place.lon, place.lat];
+  const rivals = zoneRivals(place);
+  if (!rivals.length) return { ring: circleRing(center, place.radius), cut: null, rivals };
+  const [kx, ky] = metersPerDegree(center[1]);
+  const steps = 64;
+  const ring = [];
+  const cut = [];
+  for (let i = 0; i < steps; i += 1) {
+    const angle = (2 * Math.PI * i) / steps;
+    const at = (r) => [center[0] + (Math.cos(angle) * r) / kx, center[1] + (Math.sin(angle) * r) / ky];
+    let reach = place.radius;
+    let lost = false;
+    for (let r = 6; r <= place.radius + 6; r += 6) {
+      if (!ownsPoint(place, rivals, at(Math.min(r, place.radius)))) {
+        let lo = r - 6;
+        let hi = Math.min(r, place.radius);
+        for (let k = 0; k < 6; k += 1) {
+          const mid = (lo + hi) / 2;
+          if (ownsPoint(place, rivals, at(mid))) lo = mid;
+          else hi = mid;
+        }
+        reach = lo;
+        lost = true;
+        break;
+      }
+      if (r >= place.radius) break;
+    }
+    ring.push(at(reach));
+    cut.push(lost);
+  }
+  ring.push(ring[0]);
+  return { ring, cut, rivals };
+}
+
+// Край зоны по кускам: внешняя дуга и шов с соседней зоной отдельными линиями.
+function zoneEdges(shape) {
+  if (!shape.cut) return [{ seam: false, coordinates: shape.ring }];
+  const edges = [];
+  const count = shape.ring.length - 1;
+  let current = null;
+  for (let i = 0; i < count; i += 1) {
+    const next = (i + 1) % count;
+    const seam = shape.cut[i] && shape.cut[next];
+    if (!current || current.seam !== seam) {
+      current = { seam, coordinates: [shape.ring[i]] };
+      edges.push(current);
+    }
+    current.coordinates.push(shape.ring[next]);
+  }
+  return edges;
+}
+
+// Линия на 6 м частями: так её можно резать по границе зоны.
+function densify(line, step = 6) {
+  const out = [line[0]];
+  for (let i = 1; i < line.length; i += 1) {
+    const [a, b] = [line[i - 1], line[i]];
+    const n = Math.max(1, Math.ceil(distance(a, b) / step));
+    for (let k = 1; k <= n; k += 1) out.push([a[0] + ((b[0] - a[0]) * k) / n, a[1] + ((b[1] - a[1]) * k) / n]);
+  }
+  return out;
+}
+
+function ownedPieces(place, rivals, pieces) {
+  if (!rivals.length) return pieces;
+  const out = [];
+  pieces.forEach((line) => {
+    let current = null;
+    densify(line).forEach((point) => {
+      if (ownsPoint(place, rivals, point)) {
+        if (!current) {
+          current = [];
+          out.push(current);
+        }
+        current.push(point);
+      } else {
+        current = null;
+      }
+    });
+  });
+  return out.filter((line) => line.length > 1);
+}
+
 function renderPlaces() {
   const source = map.getSource("places");
   const areas = map.getSource("areas");
@@ -559,10 +669,16 @@ function renderPlaces() {
   const zones = [];
   livePlaces.forEach((place) => {
     const props = { status: place.status, level: place.level, exact: !!place.exact };
-    const ring = circleRing([place.lon, place.lat], place.radius);
-    zones.push({ type: "Feature", properties: props, geometry: { type: "Polygon", coordinates: [ring] } });
-    zones.push({ type: "Feature", properties: props, geometry: { type: "LineString", coordinates: ring } });
-    const lines = piecesOf(place.key, [place.lon, place.lat], place.radius);
+    const shape = zoneShape(place);
+    zones.push({ type: "Feature", properties: props, geometry: { type: "Polygon", coordinates: [shape.ring] } });
+    zoneEdges(shape).forEach((edge) => {
+      zones.push({
+        type: "Feature",
+        properties: { ...props, seam: edge.seam },
+        geometry: { type: "LineString", coordinates: edge.coordinates },
+      });
+    });
+    const lines = ownedPieces(place, shape.rivals, piecesOf(place.key, [place.lon, place.lat], place.radius));
     if (!lines.length) return;
     features.push({ type: "Feature", properties: props, geometry: { type: "MultiLineString", coordinates: lines } });
   });
@@ -570,20 +686,23 @@ function renderPlaces() {
   areas.setData({ type: "FeatureCollection", features: zones });
 }
 
-// Что известно про дом: область отметки по его улице, иначе улица целиком или график, иначе область
-// отметки на соседней улице, иначе вывод по соседям, иначе блёклая старая отметка, иначе «по умолчанию».
+// Что известно про дом: ближайшая отметка из тех, чья зона его накрывает (отметка по улице дома, если
+// зоны нет рядом, а улица или график уже известны, идёт раньше чужой зоны); иначе улица целиком или график,
+// иначе вывод по соседям, иначе блёклая старая область, иначе «по умолчанию».
 function houseState(key, lon, lat) {
   const at = [lon, lat];
-  const newest = (a, b) => b.at - a.at;
-  const covering = livePlaces.filter((p) => p.level !== "stale" && distance(at, [p.lon, p.lat]) <= p.radius);
-  const own = covering.filter((p) => p.key === key).sort(newest)[0];
-  if (own) return { power: own.status, level: own.level, live: own, exact: !!own.exact };
+  const gap = (p) => distance(at, [p.lon, p.lat]);
+  const covering = livePlaces.filter((p) => p.level !== "stale" && gap(p) <= p.radius);
+  const nearest = covering.sort((a, b) => gap(a) - gap(b) || b.at - a.at)[0];
   const street = stateOf(key, nearestSegmentOf(key, lon, lat));
-  if (street.level === "sure" || street.level === "likely" || street.level === "schedule") return street;
-  const other = covering.sort(newest)[0];
-  if (other) return { power: other.status, level: "area", live: other, exact: false, area: other };
+  const streetKnown = street.level === "sure" || street.level === "likely" || street.level === "schedule";
+  if (nearest && nearest.key === key) return { power: nearest.status, level: nearest.level, live: nearest, exact: !!nearest.exact };
+  if (streetKnown) return street;
+  if (nearest) return { power: nearest.status, level: "area", live: nearest, exact: false, area: nearest };
   if (street.level === "baseline") {
-    const old = livePlaces.filter((p) => p.key === key && distance(at, [p.lon, p.lat]) <= p.radius).sort(newest)[0];
+    const old = livePlaces
+      .filter((p) => p.key === key && gap(p) <= p.radius)
+      .sort((a, b) => b.at - a.at)[0];
     if (old) return { power: old.status, level: "stale", live: old, exact: !!old.exact };
   }
   return street;
@@ -1119,6 +1238,27 @@ function scheduleNow(queues) {
   };
 }
 
+// Штриховка для областей по отметкам жителей: диагональные линии цвета ответа на прозрачном фоне.
+function addHatchImages() {
+  [["on", "27, 127, 78"], ["off", "180, 35, 24"]].forEach(([status, rgb]) => {
+    if (map.hasImage(`hatch-${status}`)) return;
+    const size = 32;
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext("2d");
+    ctx.strokeStyle = `rgba(${rgb}, 0.6)`;
+    ctx.lineWidth = 3;
+    [-size / 2, 0, size / 2].forEach((shift) => {
+      ctx.beginPath();
+      ctx.moveTo(shift - 2, size + 2);
+      ctx.lineTo(shift + size + 2, -2);
+      ctx.stroke();
+    });
+    map.addImage(`hatch-${status}`, ctx.getImageData(0, 0, size, size), { pixelRatio: 2 });
+  });
+}
+
 function addStreets(streets) {
   streets.features.forEach((feature) => {
     const group = featuresByKey.get(feature.properties.key) || [];
@@ -1135,28 +1275,43 @@ function addStreets(streets) {
   map.addSource("house-dots", { type: "geojson", data: empty });
   map.addSource("pick", { type: "geojson", data: empty });
   const round = { "line-cap": "round", "line-join": "round" };
+  addHatchImages();
   const statusColor = ["case", ["==", ["get", "status"], "on"], "#1b7f4e", "#b42318"];
   const fadeOf = ["case", ["==", ["get", "level"], "stale"], 0.4, ["==", ["get", "level"], "likely"], 0.75, 1];
-  // Области отметок: лёгкая заливка круга, край сплошной у точных данных и пунктирный у отметок жителей.
+  // Области отметок: у точных данных сплошная заливка, у отметок жителей штриховка. Край зоны сплошной
+  // у точных и пунктирный у остальных, шов между соседними зонами белый.
+  const zoneFade = ["case", ["==", ["get", "level"], "stale"], 0.35, ["==", ["get", "level"], "likely"], 0.7, 1];
   map.addLayer(
     {
       id: "areas-fill",
       type: "fill",
       source: "areas",
-      filter: ["==", ["geometry-type"], "Polygon"],
+      filter: ["all", ["==", ["geometry-type"], "Polygon"], ["==", ["get", "exact"], true]],
       paint: {
         "fill-color": statusColor,
-        "fill-opacity": ["case", ["==", ["get", "level"], "stale"], 0.04, ["==", ["get", "level"], "likely"], 0.09, 0.13],
+        "fill-opacity": ["case", ["==", ["get", "level"], "stale"], 0.06, ["==", ["get", "level"], "likely"], 0.14, 0.2],
       },
     },
     beforeId
   );
+  ["on", "off"].forEach((status) => {
+    map.addLayer(
+      {
+        id: `areas-hatch-${status}`,
+        type: "fill",
+        source: "areas",
+        filter: ["all", ["==", ["geometry-type"], "Polygon"], ["!=", ["get", "exact"], true], ["==", ["get", "status"], status]],
+        paint: { "fill-pattern": `hatch-${status}`, "fill-opacity": zoneFade },
+      },
+      beforeId
+    );
+  });
   map.addLayer(
     {
       id: "areas-edge",
       type: "line",
       source: "areas",
-      filter: ["all", ["==", ["geometry-type"], "LineString"], ["==", ["get", "exact"], true]],
+      filter: ["all", ["==", ["geometry-type"], "LineString"], ["==", ["get", "exact"], true], ["!=", ["get", "seam"], true]],
       paint: { "line-color": statusColor, "line-width": 2, "line-opacity": fadeOf },
     },
     beforeId
@@ -1166,9 +1321,19 @@ function addStreets(streets) {
       id: "areas-edge-approx",
       type: "line",
       source: "areas",
-      filter: ["all", ["==", ["geometry-type"], "LineString"], ["!=", ["get", "exact"], true]],
+      filter: ["all", ["==", ["geometry-type"], "LineString"], ["!=", ["get", "exact"], true], ["!=", ["get", "seam"], true]],
       layout: { "line-cap": "butt" },
       paint: { "line-color": statusColor, "line-width": 2, "line-dasharray": [3, 2], "line-opacity": fadeOf },
+    },
+    beforeId
+  );
+  map.addLayer(
+    {
+      id: "areas-seam",
+      type: "line",
+      source: "areas",
+      filter: ["all", ["==", ["geometry-type"], "LineString"], ["==", ["get", "seam"], true]],
+      paint: { "line-color": "#ffffff", "line-width": 2.4, "line-opacity": 0.9 },
     },
     beforeId
   );
