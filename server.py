@@ -17,6 +17,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import bulletins
+import netinfo
 import sensors
 import store
 from model import HORIZON_MIN, MIN_MS, clean_radius, valid_point
@@ -361,11 +362,20 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"ok": False, "reason": "сначала выберите на карте место на улице"})
             return
         public_ip = sensors.global_ipv4(ip)
-        if not public_ip:
+        if not public_ip or payload.get("net") == "cellular":
             self.send_json(
                 {
                     "ok": False,
                     "reason": "Не вышло: нужен белый IPv4. Откройте карту из домашнего Wi-Fi, не с мобильного интернета и не через VPN.",
+                }
+            )
+            return
+        network = netinfo.lookup(public_ip)
+        if network["kind"] == "mobile":
+            self.send_json(
+                {
+                    "ok": False,
+                    "reason": f"Это сеть мобильного оператора ({network['name']}), по ней датчик не подключить. Откройте карту из домашнего Wi-Fi.",
                 }
             )
             return
@@ -386,11 +396,11 @@ class Handler(BaseHTTPRequestHandler):
             return
         owner = store.reporter_id(SECRET["salt"], "owner", ip)
         with store.connect() as conn:
-            if mine and sensors.reenroll(conn, token, street, float(lon), float(lat), public_ip, now):
+            if mine and sensors.reenroll(conn, token, street, float(lon), float(lat), public_ip, now, asn=network["asn"]):
                 result_token = token
             else:
                 result_token = sensors.create(
-                    conn, "ping", street, float(lon), float(lat), owner, now, ip=public_ip, confirmed=False
+                    conn, "ping", street, float(lon), float(lat), owner, now, ip=public_ip, confirmed=False, asn=network["asn"]
                 )
         self.send_json(
             {
@@ -410,7 +420,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         now = int(time.time() * 1000)
         with store.connect() as conn:
-            result = sensors.check(conn, str(payload.get("token") or ""), ip, now)
+            result = sensors.check(conn, str(payload.get("token") or ""), ip, now, cellular=payload.get("net") == "cellular")
         self.send_json({"ok": result["state"] != "gone", **result})
 
     def sensor_delete(self, payload):

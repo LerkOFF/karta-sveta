@@ -73,7 +73,8 @@ CREATE TABLE IF NOT EXISTS sensors (
     quiet INTEGER NOT NULL DEFAULT 0,
     confirmed INTEGER NOT NULL DEFAULT 1,
     ip_seen_at INTEGER,
-    last_ping INTEGER
+    last_ping INTEGER,
+    asn INTEGER
 );
 CREATE INDEX IF NOT EXISTS sensors_owner ON sensors (owner);
 """
@@ -121,6 +122,7 @@ def init():
             ("confirmed", "INTEGER NOT NULL DEFAULT 1"),
             ("ip_seen_at", "INTEGER"),
             ("last_ping", "INTEGER"),
+            ("asn", "INTEGER"),
         ):
             if column not in have:
                 conn.execute(f"ALTER TABLE sensors ADD COLUMN {column} {kind}")

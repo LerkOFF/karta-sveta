@@ -210,6 +210,42 @@ def settle(conn, sensor, now_ms: int, salt: str, hold: bool = False):
     return None
 
 
+# Авария провайдера, а не света: в одной сети (ASN) не меньше PROVIDER_MIN датчиков, не отвечает
+# PROVIDER_SHARE из них, и у большинства упавших рядом (NEIGHBOR_M) живёт датчик другой сети.
+PROVIDER_MIN = 3
+PROVIDER_SHARE = 0.8
+PROVIDER_NEIGHBORS = 0.6
+NEIGHBOR_M = 1500
+
+
+def provider_suspects(rows):
+    """rows: подтверждённые ping-датчики (dict с id, asn, misses, last_seen, lon, lat).
+
+    Возвращает множество id упавших датчиков, которые, похоже, потеряла сеть провайдера, а не свет.
+    """
+    groups = {}
+    for row in rows:
+        if row["asn"]:
+            groups.setdefault(row["asn"], []).append(row)
+    alive = [row for row in rows if row["last_seen"] is not None and row["misses"] == 0]
+    suspects = set()
+    for asn, members in groups.items():
+        failing = [row for row in members if row["misses"] >= 1]
+        if len(members) < PROVIDER_MIN or len(failing) / len(members) < PROVIDER_SHARE:
+            continue
+        backed = [
+            row
+            for row in failing
+            if any(
+                other["asn"] != asn and distance_m(row["lon"], row["lat"], other["lon"], other["lat"]) <= NEIGHBOR_M
+                for other in alive
+            )
+        ]
+        if len(backed) / len(failing) >= PROVIDER_NEIGHBORS:
+            suspects.update(row["id"] for row in failing)
+    return suspects
+
+
 def by_token(conn, token: str):
     row = conn.execute("SELECT * FROM sensors WHERE token_hash = ?", (token_hash(token),)).fetchone()
     return dict(row) if row else None
@@ -224,7 +260,17 @@ def ip_taken(conn, ip: str) -> bool:
 
 
 def create(
-    conn, mode: str, street, lon: float, lat: float, owner: str, now_ms: int, ip=None, alive: bool = False, confirmed: bool = True
+    conn,
+    mode: str,
+    street,
+    lon: float,
+    lat: float,
+    owner: str,
+    now_ms: int,
+    ip=None,
+    alive: bool = False,
+    confirmed: bool = True,
+    asn=None,
 ):
     """Заводит датчик и возвращает токен (в базе только его хеш). alive: ответ уже получен.
 
@@ -234,37 +280,38 @@ def create(
     lon, lat = snap(lon, lat)
     conn.execute(
         "INSERT INTO sensors (token_hash, mode, key, name, lon, lat, radius, ip, owner, created_at, last_seen,"
-        " confirmed, ip_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " confirmed, ip_seen_at, asn) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             token_hash(token), mode, street["key"], street["name"], lon, lat, RADIUS, ip, owner, now_ms,
-            now_ms if alive else None, 1 if confirmed else 0, now_ms if ip else None,
+            now_ms if alive else None, 1 if confirmed else 0, now_ms if ip else None, asn,
         ),
     )
     return token
 
 
-def reenroll(conn, token: str, street, lon: float, lat: float, ip: str, now_ms: int) -> bool:
+def reenroll(conn, token: str, street, lon: float, lat: float, ip: str, now_ms: int, asn=None) -> bool:
     """Тот же человек (токен) подключает ping-датчик заново: другое место или другой IP, снова испытание."""
     lon, lat = snap(lon, lat)
     done = conn.execute(
         "UPDATE sensors SET key = ?, name = ?, lon = ?, lat = ?, ip = ?, created_at = ?, ip_seen_at = ?,"
         " last_seen = NULL, misses = 0, state = NULL, state_at = NULL, reported_at = NULL,"
-        " quiet = 0, confirmed = 0, last_ping = NULL WHERE token_hash = ? AND mode = 'ping'",
-        (street["key"], street["name"], lon, lat, ip, now_ms, now_ms, token_hash(token)),
+        " quiet = 0, confirmed = 0, last_ping = NULL, asn = ? WHERE token_hash = ? AND mode = 'ping'",
+        (street["key"], street["name"], lon, lat, ip, now_ms, now_ms, asn, token_hash(token)),
     )
     return done.rowcount > 0
 
 
-def check(conn, token: str, ip: str, now_ms: int):
+def check(conn, token: str, ip: str, now_ms: int, cellular: bool = False):
     """Человек с токеном открыл карту. Подтверждает IP, если он тот же через сутки после подключения.
 
     Возвращает {"state": "gone"} или {"state": "probation" | "active", "sensor": "on" | "off" | None,
     "ready_at": когда можно ждать включения}. Другой IP не вредит: человек мог зайти с мобильного.
+    cellular: браузер сообщил, что человек сейчас на мобильной сети; такой заход IP не подтверждает.
     """
     sensor = by_token(conn, token)
     if not sensor or sensor["mode"] != "ping":
         return {"state": "gone"}
-    if sensor["ip"] and ip == sensor["ip"]:
+    if sensor["ip"] and ip == sensor["ip"] and not cellular:
         conn.execute("UPDATE sensors SET ip_seen_at = ? WHERE id = ?", (now_ms, sensor["id"]))
         if not sensor["confirmed"] and now_ms - sensor["created_at"] >= CONFIRM_MS:
             conn.execute("UPDATE sensors SET confirmed = 1, last_ping = NULL WHERE id = ?", (sensor["id"],))
@@ -273,7 +320,7 @@ def check(conn, token: str, ip: str, now_ms: int):
         "state": "active" if sensor["confirmed"] else "probation",
         "sensor": sensor["state"],
         "ready_at": sensor["created_at"] + CONFIRM_MS,
-        "same_ip": bool(sensor["ip"] and ip == sensor["ip"]),
+        "same_ip": bool(sensor["ip"] and ip == sensor["ip"] and not cellular),
     }
 
 
@@ -306,11 +353,14 @@ def record_ping(conn, sensor_id: int, ok: bool, now_ms: int):
         conn.execute("UPDATE sensors SET misses = misses + 1, last_ping = ? WHERE id = ?", (now_ms, sensor_id))
 
 
-def tick(conn, now_ms: int, salt: str, hold: bool = False):
-    """Один проход по всем датчикам. Возвращает {id: новый статус} для тех, где была отметка."""
+def tick(conn, now_ms: int, salt: str, hold: bool = False, hold_ids=()):
+    """Один проход по всем датчикам. Возвращает {id: новый статус} для тех, где была отметка.
+
+    hold_ids: датчики, которым «нет» не пишем (подозрение на аварию провайдера).
+    """
     done = {}
     for row in conn.execute("SELECT * FROM sensors").fetchall():
-        status = settle(conn, dict(row), now_ms, salt, hold)
+        status = settle(conn, dict(row), now_ms, salt, hold or row["id"] in hold_ids)
         if status:
             done[row["id"]] = status
     return done

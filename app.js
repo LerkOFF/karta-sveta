@@ -426,6 +426,12 @@ function scopeText() {
   return scope >= 500 ? "отрезок около 1 км" : `отрезок около ${scope * 2} м`;
 }
 
+// Браузеры на Android сами говорят, что человек на мобильной сети; тогда адрес дома он не покажет.
+function connectionKind() {
+  const link = navigator.connection;
+  return link && link.type === "cellular" ? "cellular" : "";
+}
+
 function savedToken() {
   try {
     return localStorage.getItem(TOKEN_KEY) || "";
@@ -481,7 +487,7 @@ async function refreshWatch() {
   const response = await fetch("api/watch/check", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ token }),
+    body: JSON.stringify({ token, net: connectionKind() }),
   });
   const result = await response.json();
   if (result.state === "gone") saveToken("");
@@ -496,7 +502,7 @@ async function watchHere() {
     const response = await fetch("api/watch", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key: pick.key, lon: pick.lon, lat: pick.lat, token: savedToken() }),
+      body: JSON.stringify({ key: pick.key, lon: pick.lon, lat: pick.lat, token: savedToken(), net: connectionKind() }),
     });
     const result = await response.json();
     if (!result.ok) {

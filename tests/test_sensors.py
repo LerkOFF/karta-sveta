@@ -126,6 +126,32 @@ class PlanTest(unittest.TestCase):
         self.assertEqual(sensors.plan(dict(quiet, last_seen=NOW), NOW)[0], "on")
 
 
+def net_row(sensor_id, asn, lon, misses=0):
+    return {"id": sensor_id, "asn": asn, "misses": misses, "last_seen": NOW, "lon": lon, "lat": 48.0}
+
+
+class ProviderTest(unittest.TestCase):
+    def test_whole_network_down_with_other_networks_up_nearby_is_the_provider(self):
+        rows = [net_row(1, 100, 37.800, 1), net_row(2, 100, 37.805, 1), net_row(3, 100, 37.810, 2), net_row(4, 200, 37.802), net_row(5, 200, 37.808)]
+        self.assertEqual(sensors.provider_suspects(rows), {1, 2, 3})
+
+    def test_district_blackout_hits_every_network_so_it_is_not_the_provider(self):
+        rows = [net_row(i, 100 + i % 2, 37.8 + i * 0.001, 1) for i in range(6)]
+        self.assertEqual(sensors.provider_suspects(rows), set())
+
+    def test_small_network_is_not_judged(self):
+        rows = [net_row(1, 100, 37.800, 1), net_row(2, 100, 37.805, 1), net_row(3, 200, 37.802)]
+        self.assertEqual(sensors.provider_suspects(rows), set())
+
+    def test_far_away_live_sensor_of_another_network_proves_nothing(self):
+        rows = [net_row(1, 100, 37.800, 1), net_row(2, 100, 37.805, 1), net_row(3, 100, 37.810, 1), net_row(4, 200, 37.900)]
+        self.assertEqual(sensors.provider_suspects(rows), set())
+
+    def test_sensors_without_network_are_ignored(self):
+        rows = [net_row(1, None, 37.800, 1), net_row(2, None, 37.805, 1), net_row(3, None, 37.810, 1), net_row(4, 200, 37.802)]
+        self.assertEqual(sensors.provider_suspects(rows), set())
+
+
 class DatabaseTest(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()
@@ -213,6 +239,28 @@ class DatabaseTest(unittest.TestCase):
             self.assertEqual(
                 list(sensors.tick(conn, NOW + sensors.CONFIRM_MS + MIN_MS, SALT).values()), ["on"]
             )
+
+    def test_cellular_visit_does_not_confirm_the_ip(self):
+        with store.connect() as conn:
+            token = sensors.create(conn, "ping", STREET, 37.8, 48.0, "o", NOW, ip="8.8.8.8", confirmed=False)
+            late = NOW + sensors.CONFIRM_MS + MIN_MS
+            self.assertEqual(sensors.check(conn, token, "8.8.8.8", late, cellular=True)["state"], "probation")
+            self.assertEqual(sensors.check(conn, token, "8.8.8.8", late)["state"], "active")
+
+    def test_provider_hold_blocks_off_for_chosen_sensors_only(self):
+        with store.connect() as conn:
+            t1 = sensors.create(conn, "ping", STREET, 37.8, 48.0, "o", NOW, ip="8.8.8.8", alive=True, asn=100)
+            t2 = sensors.create(conn, "ping", STREET, 37.9, 48.0, "p", NOW, ip="8.8.4.4", alive=True, asn=200)
+            sensors.tick(conn, NOW, SALT)
+            for token in (t1, t2):
+                row = sensors.by_token(conn, token)
+                sensors.record_ping(conn, row["id"], False, NOW + 5 * MIN_MS)
+                sensors.record_ping(conn, row["id"], False, NOW + 10 * MIN_MS)
+            first = sensors.by_token(conn, t1)["id"]
+            done = sensors.tick(conn, NOW + 10 * MIN_MS, SALT, hold_ids={first})
+            self.assertEqual(list(done.values()), ["off"])
+            self.assertEqual(sensors.by_token(conn, t1)["state"], "on")
+            self.assertEqual(sensors.by_token(conn, t2)["state"], "off")
 
     def test_pings_are_spaced_by_five_minutes(self):
         with store.connect() as conn:

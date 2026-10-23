@@ -60,9 +60,19 @@ def cycle(salt: str, since: dict) -> dict:
     with store.connect() as conn:
         for sensor_id, ok in results.items():
             sensors.record_ping(conn, sensor_id, ok, now)
-        done = sensors.tick(conn, now, salt, hold)
+        confirmed = [dict(row) for row in conn.execute("SELECT * FROM sensors WHERE mode = 'ping' AND confirmed = 1")]
+        suspects = sensors.provider_suspects(confirmed)
+        done = sensors.tick(conn, now, salt, hold, suspects)
         counts = store.sensor_counts(conn)
-    return {"hold": hold, "net": net_ok, "server": server_ok, "pinged": len(pinged), "marks": len(done), **counts}
+    return {
+        "hold": hold,
+        "net": net_ok,
+        "server": server_ok,
+        "pinged": len(pinged),
+        "marks": len(done),
+        "provider": len(suspects),
+        **counts,
+    }
 
 
 def main():
