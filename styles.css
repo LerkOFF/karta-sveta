@@ -364,6 +364,39 @@ body.page { display: block; height: auto; }
 
 .card .close { display: none; }
 
+/* Свернуть окно: остаётся одна кнопка, вид карты открыт */
+.fold {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 5;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--ink);
+  font: 600 18px/1 ui-sans-serif, system-ui, sans-serif;
+  cursor: pointer;
+}
+.card:not(.folded) .search { padding-right: 40px; }
+.card.folded,
+#map.picking .card.folded {
+  top: 10px;
+  bottom: auto;
+  left: 56px;
+  width: auto;
+  padding: 4px;
+}
+.card.folded > :not(.fold) { display: none !important; }
+.card.folded .fold {
+  position: static;
+  height: 36px;
+  padding: 0 14px;
+  font: 14px/1 ui-sans-serif, system-ui, sans-serif;
+}
+
 /* Датчик «следить за этим местом» в карточке */
 .watch { margin-top: 8px; }
 .watch[hidden] { display: none; }
@@ -401,6 +434,8 @@ body.page { display: block; height: auto; }
   #map.picking .card .watch:not([hidden]) { display: block; }
   #map.picking .card .note { display: block; height: auto; min-height: 1.4em; max-height: 4.2em; font-size: 13px; }
   #map.picking .card .search { display: none; }
+  #map.picking .card .fold { right: 46px; top: 6px; }
+  #map.picking .card.folded { top: auto; bottom: 8px; left: 8px; }
   #map.picking .card .close {
     display: block;
     position: absolute;

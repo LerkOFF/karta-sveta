@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" sizes="120x120" href="/favicon-120.png">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="stylesheet" href="vendor/maplibre/maplibre-gl.css">
-  <link rel="stylesheet" href="styles.css?v=17">
+  <link rel="stylesheet" href="styles.css?v=18">
   <script>
     (function(m,e,t,r,i,k,a){m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};
     m[i].l=1*new Date();
@@ -23,6 +23,7 @@
   <main id="map">
     <section class="card" id="card">
       <button id="unpick" type="button" class="close" aria-label="Закрыть">×</button>
+      <button id="fold" type="button" class="fold" aria-label="Свернуть окно" aria-expanded="true">−</button>
       <div class="search">
         <input id="query" type="search" placeholder="Найти улицу" autocomplete="off" aria-label="Улица">
         <button id="here" type="button" class="btn ghost">Моё место</button>
@@ -84,6 +85,6 @@
     <p class="foot"><a href="about.html">О карте и источниках</a>. Линии улиц © участники OpenStreetMap.</p>
   </aside>
   <script src="vendor/maplibre/maplibre-gl.js"></script>
-  <script src="app.js?v=29"></script>
+  <script src="app.js?v=30"></script>
 </body>
 </html>

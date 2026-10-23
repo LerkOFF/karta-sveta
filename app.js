@@ -30,6 +30,8 @@ const hereBtn = document.querySelector("#here");
 const markNote = document.querySelector("#mark-note");
 const mapEl = document.querySelector("#map");
 const unpickBtn = document.querySelector("#unpick");
+const foldBtn = document.querySelector("#fold");
+const cardEl = document.querySelector("#card");
 const bulletinEl = document.querySelector("#bulletin");
 const chipsEl = document.querySelector("#scopes");
 const fromInput = document.querySelector("#h-from");
@@ -796,7 +798,31 @@ function clearHouses() {
   toInput.value = "";
 }
 
+// Окно можно свернуть, чтобы оно не закрывало карту; состояние запоминается в браузере.
+const FOLD_KEY = "karta-card-folded";
+
+function setFolded(folded, remember = true) {
+  cardEl.classList.toggle("folded", folded);
+  foldBtn.textContent = folded ? "Отметить свет ▾" : "−";
+  foldBtn.setAttribute("aria-expanded", String(!folded));
+  foldBtn.setAttribute("aria-label", folded ? "Развернуть окно" : "Свернуть окно");
+  if (!remember) return;
+  try {
+    localStorage.setItem(FOLD_KEY, folded ? "1" : "");
+  } catch (error) {
+    /* без хранилища окно просто развернётся при следующем заходе */
+  }
+}
+
+foldBtn.addEventListener("click", () => setFolded(!cardEl.classList.contains("folded")));
+try {
+  if (localStorage.getItem(FOLD_KEY)) setFolded(true, false);
+} catch (error) {
+  /* хранилище недоступно: окно развёрнуто */
+}
+
 function setPick(next) {
+  if (next) setFolded(false, false);
   pick = next;
   watchMsg = "";
   focusKey = null;
