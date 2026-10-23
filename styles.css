@@ -252,6 +252,7 @@ textarea {
 .swatch.pick { background: var(--pick); }
 .swatch.nbr { background: repeating-linear-gradient(90deg, #5f584f 0 3px, transparent 3px 6px); }
 .swatch.solid { background: #5f584f; }
+.swatch.unv { background: #e08a1e; }
 .swatch.dash { background: repeating-linear-gradient(90deg, #5f584f 0 7px, transparent 7px 10px); }
 .swatch.base { background: radial-gradient(circle, var(--on) 1.4px, transparent 1.8px) 0 50% / 5px 4px repeat-x; }
 .swatch.fade { background: linear-gradient(90deg, var(--on), var(--off)); opacity: 0.4; }

@@ -21,6 +21,9 @@ const HOUSE_SCOPE = 18;
 const HOUSE_ZOOM = 16;
 // Дальше 200 м вокруг человека свет не отмечаем, улицу целиком тоже.
 const MAX_SCOPE = 200;
+
+// Оранжевый: человек сам выбрал на карте, подтверждения нет, верить пока нельзя.
+const ORANGE = "#e08a1e";
 const HOUSE_MAX = 6000;
 
 const queryInput = document.querySelector("#query");
@@ -115,12 +118,12 @@ function baselineKind() {
 
 function stateOf(key, segment) {
   const live = liveByKey.get(key) || null;
-  if (live && live.level !== "stale") return { power: live.status, level: live.level, live, exact: !!live.exact };
+  if (live && live.level !== "stale") return { power: live.status, level: live.level, live, exact: !!live.exact, unverified: !!live.unverified };
   const plan = autoByKey.get(key);
   if (plan) return { power: plan, level: "schedule", live, exact: true };
   const near = segment ? neighborBySegment.get(segment) : null;
   if (near) return { power: near.status, level: "neighbor", live, near };
-  if (live && !live.superseded_at) return { power: live.status, level: "stale", live, exact: !!live.exact };
+  if (live && !live.superseded_at) return { power: live.status, level: "stale", live, exact: !!live.exact, unverified: !!live.unverified };
   return { power: "on", level: "baseline", live, base: baselineKind() };
 }
 
@@ -140,7 +143,11 @@ function describe(state) {
   const live = state.live;
   if (state.level === "sure" || state.level === "likely") {
     const dispute = live.conflict ? " Ответы расходятся." : "";
-    const exactness = live.exact ? " Точные данные." : " Со слов жителей или из чата, не точные данные.";
+    const exactness = live.exact
+      ? " Точные данные."
+      : live.unverified
+        ? " Не подтверждено: пока так отметил один человек на карте."
+        : " Со слов жителей или из чата, не точные данные.";
     return `${word(live.status)}, ${ago(live.at)}: ${LEVEL_WORD[state.level]}, ${sourcesWord(live.sources)}.${dispute}${restoredNote(live)} Последняя отметка: «${live.source}».${exactness}`;
   }
   if (state.level === "area") {
@@ -339,7 +346,7 @@ function candidatesNear(lon, lat, meters) {
 function computeNeighbors() {
   const sources = [];
   liveReports.forEach((report) => {
-    if (report.level === "stale") return;
+    if (report.level === "stale" || report.unverified) return;
     const group = featuresByKey.get(report.key) || [];
     const meters = group.reduce((sum, feature) => sum + (feature.properties.meters || 0), 0);
     if (!group.length || meters > NEIGHBOR_MAX_STREET_M) return;
@@ -347,7 +354,7 @@ function computeNeighbors() {
     sources.push({ key: report.key, status: report.status, conf: report.confidence, name: report.name, at: report.at, pts, radius: 0 });
   });
   livePlaces.forEach((place) => {
-    if (place.level === "stale") return;
+    if (place.level === "stale" || place.unverified) return;
     sources.push({
       key: place.key,
       status: place.status,
@@ -411,7 +418,7 @@ function applyState(segment, key) {
   const state = stateOf(key, segment);
   map.setFeatureState(
     { source: "streets", id: segment },
-    { power: state.power, level: state.level, exact: !!state.exact, focused: key === focusKey }
+    { power: state.power, level: state.level, exact: !!state.exact, unverified: !!state.unverified, focused: key === focusKey }
   );
 }
 
@@ -671,7 +678,7 @@ function renderPlaces() {
   const features = [];
   const zones = [];
   livePlaces.forEach((place) => {
-    const props = { status: place.status, level: place.level, exact: !!place.exact };
+    const props = { status: place.status, level: place.level, exact: !!place.exact, unverified: !!place.unverified };
     const shape = zoneShape(place);
     zones.push({ type: "Feature", properties: props, geometry: { type: "Polygon", coordinates: [shape.ring] } });
     zoneEdges(shape).forEach((edge) => {
@@ -699,14 +706,16 @@ function houseState(key, lon, lat) {
   const nearest = covering.sort((a, b) => gap(a) - gap(b) || b.at - a.at)[0];
   const street = stateOf(key, nearestSegmentOf(key, lon, lat));
   const streetKnown = street.level === "sure" || street.level === "likely" || street.level === "schedule";
-  if (nearest && nearest.key === key) return { power: nearest.status, level: nearest.level, live: nearest, exact: !!nearest.exact };
+  if (nearest && nearest.key === key) {
+    return { power: nearest.status, level: nearest.level, live: nearest, exact: !!nearest.exact, unverified: !!nearest.unverified };
+  }
   if (streetKnown) return street;
-  if (nearest) return { power: nearest.status, level: "area", live: nearest, exact: false, area: nearest };
+  if (nearest) return { power: nearest.status, level: "area", live: nearest, exact: false, unverified: !!nearest.unverified, area: nearest };
   if (street.level === "baseline") {
     const old = livePlaces
       .filter((p) => p.key === key && gap(p) <= p.radius)
       .sort((a, b) => b.at - a.at)[0];
-    if (old) return { power: old.status, level: "stale", live: old, exact: !!old.exact };
+    if (old) return { power: old.status, level: "stale", live: old, exact: !!old.exact, unverified: !!old.unverified };
   }
   return street;
 }
@@ -753,7 +762,7 @@ function renderHouseDots() {
         const state = houseState(key, row[1], row[2]);
         features.push({
           type: "Feature",
-          properties: { power: state.power, level: state.level, exact: !!state.exact, n: row[0], key },
+          properties: { power: state.power, level: state.level, exact: !!state.exact, unverified: !!state.unverified, n: row[0], key },
           geometry: { type: "Point", coordinates: [row[1], row[2]] },
         });
         if (features.length >= HOUSE_MAX) break scan;
@@ -1272,7 +1281,7 @@ function scheduleNow(queues) {
 
 // Штриховка для областей по отметкам жителей: диагональные линии цвета ответа на прозрачном фоне.
 function addHatchImages() {
-  [["on", "27, 127, 78"], ["off", "180, 35, 24"]].forEach(([status, rgb]) => {
+  [["on", "27, 127, 78"], ["off", "180, 35, 24"], ["unverified", "224, 138, 30"]].forEach(([status, rgb]) => {
     if (map.hasImage(`hatch-${status}`)) return;
     const size = 32;
     const canvas = document.createElement("canvas");
@@ -1308,7 +1317,14 @@ function addStreets(streets) {
   map.addSource("pick", { type: "geojson", data: empty });
   const round = { "line-cap": "round", "line-join": "round" };
   addHatchImages();
-  const statusColor = ["case", ["==", ["get", "status"], "on"], "#1b7f4e", "#b42318"];
+  const statusColor = [
+    "case",
+    ["==", ["get", "unverified"], true],
+    ORANGE,
+    ["==", ["get", "status"], "on"],
+    "#1b7f4e",
+    "#b42318",
+  ];
   const fadeOf = ["case", ["==", ["get", "level"], "stale"], 0.4, ["==", ["get", "level"], "likely"], 0.75, 1];
   // Области отметок: у точных данных сплошная заливка, у отметок жителей штриховка. Край зоны сплошной
   // у точных и пунктирный у остальных, шов между соседними зонами белый.
@@ -1326,14 +1342,18 @@ function addStreets(streets) {
     },
     beforeId
   );
-  ["on", "off"].forEach((status) => {
+  [
+    ["on", ["all", ["==", ["get", "status"], "on"], ["!=", ["get", "unverified"], true]]],
+    ["off", ["all", ["==", ["get", "status"], "off"], ["!=", ["get", "unverified"], true]]],
+    ["unverified", ["==", ["get", "unverified"], true]],
+  ].forEach(([name, filter]) => {
     map.addLayer(
       {
-        id: `areas-hatch-${status}`,
+        id: `areas-hatch-${name}`,
         type: "fill",
         source: "areas",
-        filter: ["all", ["==", ["geometry-type"], "Polygon"], ["!=", ["get", "exact"], true], ["==", ["get", "status"], status]],
-        paint: { "fill-pattern": `hatch-${status}`, "fill-opacity": zoneFade },
+        filter: ["all", ["==", ["geometry-type"], "Polygon"], ["!=", ["get", "exact"], true], filter],
+        paint: { "fill-pattern": `hatch-${name}`, "fill-opacity": zoneFade },
       },
       beforeId
     );
@@ -1442,7 +1462,14 @@ function addStreets(streets) {
       source: "streets",
       layout: { "line-cap": "butt" },
       paint: {
-        "line-color": ["case", ["==", ["feature-state", "power"], "off"], "#b42318", "#1b7f4e"],
+        "line-color": [
+          "case",
+          ["boolean", ["feature-state", "unverified"], false],
+          ORANGE,
+          ["==", ["feature-state", "power"], "off"],
+          "#b42318",
+          "#1b7f4e",
+        ],
         "line-width": 4.5,
         "line-dasharray": [3, 1.4],
         "line-opacity": [
@@ -1517,7 +1544,7 @@ function addStreets(streets) {
     beforeId
   );
   // Дома точками: сплошная точка точные данные, кольцо отметка жителей или область, мелкая точка «по умолчанию».
-  const houseColor = ["case", ["==", ["get", "power"], "off"], "#b42318", "#1b7f4e"];
+  const houseColor = ["case", ["==", ["get", "unverified"], true], ORANGE, ["==", ["get", "power"], "off"], "#b42318", "#1b7f4e"];
   const houseFade = [
     "case",
     ["==", ["get", "level"], "stale"],

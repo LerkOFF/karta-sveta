@@ -19,6 +19,10 @@ TRUST = {"chat": 1.0, "bot": 1.0, "sensor": 1.0, "official": 1.0, "button": 0.85
 # комментарий, это пересказ или слово человека: на карте такая отметка рисуется пунктиром.
 EXACT_KINDS = ("official", "sensor")
 
+# Отметки, которые человек сам выбрал кликом на сайте: пока их не подтвердил второй человек
+# или точный источник, им верить нельзя. На карте они оранжевые (unverified).
+SELF_REPORT_KINDS = ("button", "comment")
+
 # Дольше суток без подтверждения улица считается серой, но запись остаётся в истории.
 HORIZON_MIN = 24 * 60
 
@@ -102,6 +106,7 @@ def assess(rows, now_ms: int, restored_at=None):
         "superseded_at": superseded_at,
         "source": latest["source"],
         "exact": latest["kind"] in EXACT_KINDS,
+        "unverified": latest["kind"] in SELF_REPORT_KINDS and agree == 0,
     }
 
 

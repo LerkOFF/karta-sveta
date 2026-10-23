@@ -71,6 +71,28 @@ class ZonesTest(unittest.TestCase):
         self.assertEqual(zones[0]["sources"], 2)
 
 
+class UnverifiedTest(unittest.TestCase):
+    def test_single_click_on_the_map_is_unverified(self):
+        for kind in ("button", "comment"):
+            self.assertTrue(assess([row(1, kind=kind)], NOW)["unverified"], kind)
+
+    def test_chat_channel_and_exact_sources_are_not_unverified(self):
+        for kind in ("chat", "channel", "bot", "official", "sensor"):
+            self.assertFalse(assess([row(1, kind=kind)], NOW)["unverified"], kind)
+
+    def test_second_person_with_the_same_answer_verifies(self):
+        rows = [row(10, "off", reporter="a", kind="button"), row(2, "off", reporter="b", kind="button")]
+        self.assertFalse(assess(rows, NOW)["unverified"])
+
+    def test_a_person_confirming_himself_does_not_verify(self):
+        rows = [row(10, "off", reporter="a", kind="button"), row(2, "off", reporter="a", kind="button")]
+        self.assertTrue(assess(rows, NOW)["unverified"])
+
+    def test_opposite_answer_does_not_verify(self):
+        rows = [row(10, "on", reporter="a", kind="button"), row(2, "off", reporter="b", kind="button")]
+        self.assertTrue(assess(rows, NOW)["unverified"])
+
+
 class ExactTest(unittest.TestCase):
     def test_only_official_and_sensor_are_exact(self):
         for kind, exact in (("official", True), ("sensor", True), ("chat", False), ("channel", False), ("button", False), ("comment", False)):
