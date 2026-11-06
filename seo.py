@@ -7,6 +7,7 @@
 
 import html
 import json
+import os
 import re
 import time
 from contextlib import closing
@@ -18,7 +19,34 @@ import store
 from model import distance_m
 
 ROOT = Path(__file__).resolve().parent
-SITE = "https://xn----ctbhcc4athwm3c.xn--p1ai"
+# Исторический адрес: так написаны статические страницы (index.html, about.html).
+LEGACY_ORIGIN = "https://xn----ctbhcc4athwm3c.xn--p1ai"
+LEGACY_COUNTER = "113728535"
+# Где живёт карта. Отдельный домен: ORIGIN без BASE. Раздел портала: KARTA_BASE=/svet.
+ORIGIN = os.environ.get("KARTA_ORIGIN", LEGACY_ORIGIN).rstrip("/")
+BASE = os.environ.get("KARTA_BASE", "").rstrip("/")
+COUNTER = os.environ.get("KARTA_COUNTER", LEGACY_COUNTER)
+SITE = ORIGIN + BASE
+
+_LOCAL_LINK = re.compile(r'(\b(?:href|src|action)=")/(?!/)')
+
+
+def localize(text):
+    """Подгоняет готовую HTML-страницу под адрес и префикс из окружения.
+
+    Адреса сайта и корневые ссылки (`/ulica/...`, `/styles.css`) пишутся как для отдельного домена,
+    а когда карта живёт в разделе портала, получают префикс. Номер счётчика тоже берётся из окружения.
+    """
+    text = text.replace("{{HOME}}", ORIGIN + "/")
+    if SITE != LEGACY_ORIGIN:
+        text = text.replace(LEGACY_ORIGIN, SITE)
+    if BASE:
+        text = _LOCAL_LINK.sub(lambda m: m.group(1) + BASE + "/", text)
+    if COUNTER != LEGACY_COUNTER:
+        text = text.replace(LEGACY_COUNTER, COUNTER)
+    return text
+
+
 NAME = "Карта света"
 MSK = timezone(timedelta(hours=3))
 LIVE_TTL = 30
@@ -636,5 +664,5 @@ class Site:
         else:
             return None
         if page is None:
-            return 404, "<!DOCTYPE html><meta charset=utf-8><title>Не найдено</title><p>Такой страницы нет. <a href=\"/\">Карта света</a></p>", html_type
-        return 200, page, html_type
+            return 404, localize("<!DOCTYPE html><meta charset=utf-8><title>Не найдено</title><p>Такой страницы нет. <a href=\"/\">Карта света</a></p>"), html_type
+        return 200, localize(page), html_type

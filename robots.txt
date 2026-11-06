@@ -4,4 +4,4 @@ Allow: /
 
 Clean-param: street /
 
-Sitemap: https://xn----ctbhcc4athwm3c.xn--p1ai/sitemap.xml
+Sitemap: https://xn----etbdbf4ateadr3f.xn--p1ai/svet/sitemap.xml

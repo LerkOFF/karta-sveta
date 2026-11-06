@@ -192,11 +192,19 @@ class Handler(BaseHTTPRequestHandler):
                 return target
         return None
 
+    def app_path(self):
+        """Путь запроса без префикса раздела (KARTA_BASE) и без строки запроса."""
+        path = self.path.split("?", 1)[0]
+        base = seo.BASE
+        if base and (path == base or path.startswith(base + "/")):
+            path = path[len(base):] or "/"
+        return path
+
     def do_HEAD(self):
         self.do_GET()
 
     def do_GET(self):
-        path = self.path.split("?", 1)[0]
+        path = self.app_path()
         if path == "/api/live":
             with store.connect() as conn:
                 state = store.live(conn)
@@ -226,7 +234,10 @@ class Handler(BaseHTTPRequestHandler):
         if ctype.startswith("text/") or ctype.endswith("json") or ctype.endswith("javascript"):
             ctype += "; charset=utf-8"
         cache = "public, max-age=3600" if path.startswith(LONG_CACHE) else "no-store"
-        self.send_bytes(200, target.read_bytes(), ctype, cache)
+        body = target.read_bytes()
+        if target.suffix == ".html":
+            body = seo.localize(body.decode("utf-8")).encode("utf-8")
+        self.send_bytes(200, body, ctype, cache)
 
     def read_payload(self):
         length = int(self.headers.get("Content-Length") or 0)
@@ -240,7 +251,7 @@ class Handler(BaseHTTPRequestHandler):
         return data if isinstance(data, dict) else {}
 
     def do_POST(self):
-        path = self.path.split("?", 1)[0]
+        path = self.app_path()
         payload = self.read_payload()
         if payload is None:
             self.send_json({"ok": False, "reason": "слишком длинное сообщение"}, 413)

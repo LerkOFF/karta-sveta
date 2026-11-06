@@ -9,6 +9,8 @@ WorkingDirectory=/var/www/karta-sveta
 Environment=KARTA_HOST=127.0.0.1
 Environment=KARTA_PORT=8765
 Environment=KARTA_QUIET=1
+Environment=KARTA_ORIGIN=https://xn----etbdbf4ateadr3f.xn--p1ai
+Environment=KARTA_BASE=/svet
 Environment=PYTHONDONTWRITEBYTECODE=1
 ExecStart=/usr/bin/python3 server.py
 Restart=always
