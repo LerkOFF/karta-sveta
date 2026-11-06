@@ -31,6 +31,21 @@ SITE = ORIGIN + BASE
 _LOCAL_LINK = re.compile(r'(\b(?:href|src|action)=")/(?!/)')
 
 
+DESCRIPTION_MAX = 160
+
+
+def fit_description(text):
+    """Description не длиннее 160 знаков: поисковики режут длиннее. Обрезаем по слову и по возможности по предложению."""
+    text = " ".join(text.split())
+    if len(text) <= DESCRIPTION_MAX:
+        return text
+    cut = text[:DESCRIPTION_MAX - 1]
+    stop = max(cut.rfind(". "), cut.rfind(": "), cut.rfind(", "))
+    if stop >= 100:
+        return cut[:stop].rstrip(".:,") + "."
+    return cut[:cut.rfind(" ")].rstrip(".:,;") + "."
+
+
 def localize(text):
     """Подгоняет готовую HTML-страницу под адрес и префикс из окружения.
 
@@ -214,6 +229,7 @@ class Site:
         return "".join(f'<a href="{href}">{label}</a>' for href, label in links)
 
     def layout(self, path, title, description, body, ld=None, og_image=True):
+        description = fit_description(description)
         url = SITE + path
         scripts = "".join(
             f'<script type="application/ld+json">{json.dumps(item, ensure_ascii=False)}</script>' for item in (ld or [])
@@ -594,7 +610,7 @@ class Site:
             f'<li><a href="{esc(l["url"])}" rel="nofollow noopener">{esc(l["title"])}</a></li>' for l in c["city"]["links"]
         )
         title = "Куда звонить, если нет света в Донецке: телефоны Донецкэнерго"
-        description = "Телефоны информационного центра и диспетчеров районов электросетей Донецкэнерго: Буденновский, Ворошиловский, Калининский, Киевский, Кировский, Куйбышевский, Ленинский, Петровский, Пролетарский районы."
+        description = "Телефоны информационного центра Донецкэнерго и диспетчеров всех девяти районов электросетей Донецка: куда звонить, если нет света."
         faq = [
             ("Куда звонить, если в Донецке нет света?", f"В информационно-консультационный центр Донецкэнерго: {', '.join(c['city']['phones'])}. Если знаете свой район, звоните диспетчеру района электросетей, телефоны по районам есть на этой странице."),
             ("Что сказать диспетчеру?", "Назовите улицу, номер дома и с какого времени нет света, уточните, нет ли света только у вас или у соседей. После звонка отметьте на карте, что света нет."),
